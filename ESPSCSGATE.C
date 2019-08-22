@@ -1,12 +1,13 @@
 #define TITLE    "ScsGAte"
 
-#define VERSION  "SCS 19.378"
+#define VERSION  "SCS 19.37C"
 #define EEPROM_VER	0x8D		// per differenziare scs e knx
 #define UART1_BUFFER    64      // numero bytes buffer uart1 interrupt
 #define UART1_INTERRUPT         // numero bytes buffer uart1 interrupt
 //#define UART1_CALL              // numero bytes buffer uart1 interrupt
 #define IMMEDIATE_ANSWER        // ricava lo stato anche dal comando (non solo dalla risposta di stato)
-#define DEV_NR		130	        // numero elementi tabella devices
+//#define DEV_NR		130	        // numero elementi tabella devices portare a 175 (AF)
+#define DEV_NR		175	        // numero elementi tabella devices (0xAF)
 
 #define inUART()   getUART()
 
@@ -391,10 +392,11 @@ extern          far int  wPeriodoRece;  //;; FFFF - periodo Recessivo [write tim
 // ===================================================================================
 #ifdef UART1_BUFFER
 extern	far   char uartMessage[UART1_BUFFER];	// buffer rx uart1
-extern  volatile far   char uPtrW;			// ptr next mem
-extern  volatile far   char uMax;			// nr of chars
-extern  volatile far   char uState;			// uart error
-char    uPtrR = 0;
+extern  volatile far   char uPtrW;				// ptr next mem (scrittura nel buffer)
+extern  volatile far   char uMax;				// nr char depositati nel buffer
+extern  volatile far   char uState;				// uart error
+extern  volatile far   char uSpikes;			// spike errors
+char    uPtrR = 0;								// ptr scodamento (lettura del buffer)
 #endif
 int uartFERR = 0;
 int uartOERR = 0;
@@ -1143,10 +1145,26 @@ void InputMapping(void)
                           sm_command = SM_WAIT_TABSTART;
                           break;
 
-                     case 'T':       // test mode  @TS
+                     case 'T':       // test mode  @TS   @TK
                           if  (opt.opzioneModo == 'A')
                           {
 							  m = getUSBwait();
+							  if (m == 'K')
+							  {
+								// spike test
+								  putrsUSBwait("\r\nSPIKE test...");
+								  dataByte.data[0] = 0x9A;
+								  dataByte.data[1] = 0xBC;
+								  dataByte.data[2] = 0xDE;
+								  dataByte.data[3] = 0xF0;
+								  dataByte.data[4] = 0x12;
+								  dataByte.data[5] = 0x34;
+								  dataByte.data[6] = 0xBB;
+								  dataByte.data[7] = 0xCD;
+								  queueWrite(8);
+								  putrsUSBwait("\r\nSPIKE test requested");
+							  }
+							  else
 							  if (m == 'S')
 							  {
 								  sm_stato   = SM_TEST_MODE;
@@ -1157,6 +1175,7 @@ void InputMapping(void)
 								  dataByte.data[4] = 0x12;
 								  dataByte.data[5] = 0x34;
 								  dataByte.data[6] = 0x56;
+//								  dataByte.data[6] = dataByte.data[1] ^ dataByte.data[2] ^ dataByte.data[3] ^ dataByte.data[4] ^ dataByte.data[5];
 								  dataByte.data[7] = 0x78;
 								  rBufferIdxW = 0;
 								  rBufferIdxR = 0;
@@ -1264,6 +1283,10 @@ void InputMapping(void)
 							  i -= opt.stream_timeout;
 							  i *= 4;
                               itoa(i,RS_Out_Buffer);
+                              putsUSBwait(RS_Out_Buffer);
+
+							  putrsUSBwait("\r\n---> spikes counter: ");
+                              itoa((int)uSpikes,RS_Out_Buffer);
                               putsUSBwait(RS_Out_Buffer);
 
 							// 4.2  gestisce il byte filtering ----------------------------------------------------
@@ -3043,15 +3066,15 @@ BYTE increment;
 		else
 		if (sm_stato   ==  SM_TEST_MODE)
 		{
-			if ((scsMessageRx[rBufferIdxR][0] == 8) &&
-				(scsMessageRx[rBufferIdxR][1] == dataByte.data[0]) &&
-				(scsMessageRx[rBufferIdxR][2] == dataByte.data[1]) &&
-				(scsMessageRx[rBufferIdxR][3] == dataByte.data[2]) &&
-				(scsMessageRx[rBufferIdxR][4] == dataByte.data[3]) &&
-				(scsMessageRx[rBufferIdxR][5] == dataByte.data[4]) &&
-				(scsMessageRx[rBufferIdxR][6] == dataByte.data[5]) &&
-				(scsMessageRx[rBufferIdxR][7] == dataByte.data[6]) &&
-				(scsMessageRx[rBufferIdxR][8] == dataByte.data[7]) )
+			f = 0;
+            l = 1;
+			while (l < scsMessageRx[rBufferIdxR][0])
+			{
+				if (scsMessageRx[rBufferIdxR][l] != dataByte.data[l-1])
+					f = 1;
+				l++;
+			}
+			if (f == 0)
 				putcUSBwait('k');
 			else
 			{
@@ -3062,14 +3085,26 @@ BYTE increment;
 				putrsUSBwait("\r\nTest FAILED!!!");
 				sm_stato = SM_HOME;
 			}
-			dataByte.data[0]++;
-			dataByte.data[1]--;
-			dataByte.data[2]++;
-			dataByte.data[3]--;
-			dataByte.data[4]++;
-			dataByte.data[5]--;
-			dataByte.data[6]++;
-			queueWrite(8);
+
+			l = dataByte.data[0] & 0x0F;
+			if (l < 4) l = 4;
+			f = 0;
+			while (f < l)  
+			{
+				dataByte.data[f]++;
+				f ++;
+				dataByte.data[f]--;
+				f ++;
+			}
+			f = 1;
+			m = 0;
+			while (f < l-2)  // 8  1-2-3-4-5-c-7
+			{
+				m ^= dataByte.data[f];
+				f ++;
+			}
+			dataByte.data[l-2] = m; // check byte
+  		    queueWrite(l);
 
 			putcUSBwait('.');
 			testCounter--;
