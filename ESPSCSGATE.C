@@ -1,8 +1,8 @@
 #define TITLE    "ScsGAte"
 
-#define VERSION  "SCS 19.303"		// V3
-#define EEPROM_VER	0x8D	// per differenziare scs e knx
-
+#define VERSION  "SCS 19.363"
+#define EEPROM_VER	0x8D		// per differenziare scs e knx
+#define UART1_INTERRUPT
 // #define ECHO
 
 //   A8 <dest> <source> <type> <cmd> XX A3
@@ -16,8 +16,10 @@
 //          cmd=09 tapparella ABBASSA
 //          cmd=0A tapparella STOP
 //
-//          cmd=80-FE intensita dimmer raggiunta
+//          cmd=1D-9D intensita dimmer raggiunta
 
+// 19.36 - uart1 rx in interrupt - usa SCS_UART.ASM  invece di SCSINTRP.ASM
+// 19.35 - gestione tapparelle a % - nuovo comando diretto @u - configurazione @Ux  0=no   1=raccogli i dati   2=online   5=list 9=ripulisci
 // 19.30 - raccoglie tabella info dispositivi - la manda a uart su richiesta @Dn (n bin o hex) indirizzo device - risponde con Dnt (n=indirizzo valido   t=tipo (0xff fine tab)
 //                                                                                se n = FF ripulisce la tabella
 // 18.93 - correzione debug uart2 - comando @0x15 per evitare memo eeprom
@@ -106,7 +108,8 @@
     #pragma config XINST=OFF
 #endif
 // ===================================================================================
-#define EE_CONFIG     0x00   // indirizzo eeprom configurazione
+#define EE_CONFIG		0x00   // indirizzo eeprom configurazione
+#define EE_TAPPA_SETUP  0x20   // indirizzo eeprom tabella setup tapparelle
 // ===================================================================================
 
 // ========================STATO monitor==============================================
@@ -122,6 +125,8 @@ ROM char baud_value[2][8] = {
 static BYTE         Ticks;
 static BYTE         ledLamps = 200;
 static BYTE         SystemTicks;
+static BYTE         TappaMoveTicks;
+static BYTE         TappaPublishTicks;
 static BYTE         EEaddress;
 static BYTE         uartRc;
 static BYTE         pMode;
@@ -146,9 +151,47 @@ BYTE devc[180];	// 0xFF:empty    01:switch    03:dimmer    08:tapparella
 BYTE didx;
 BYTE dlen;
 // ===================================================================================
-#pragma udata
-// ===================================================================================
+#pragma udata tapdata
+#define MAXTAPP 25
 
+#define UP   8
+#define DOWN 9
+#define STOP 0x0A
+
+typedef union _TAPSETUP    {
+  struct {
+        BYTE device;		//      [] indirizzo 
+        WORD maxposition;	//      [] posizione massima (in unità da 0,1 secondi)
+        };
+  struct {
+        BYTE adevice;		//      [] indirizzo 
+        WORD_VAL amaxposition;	//      [] posizione massima (in unità da 0,1 secondi)
+        };
+} TAP_SETUP;
+
+typedef union _TAPDATA     {
+  struct {
+        BYTE_VAL direction;		//      [] half.LB  direzione (0=ferma  9=giu  8=su )      bit7 = 0 : da pubblicare       1 : pubblicato
+        WORD	position;		//      [] posizione attuale (in unità da 0,1 secondi)
+        WORD	request;		//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+        BYTE	timeout;		//      [] timeout attuale (in unita da 0,1 secondi)
+        };
+  struct {
+        BYTE_VAL adirection;	//      [] half.LB  direzione (0=ferma  9=giu  8=su )      bit7 = 0 : da pubblicare       1 : pubblicato
+        WORD_VAL aposition;		//      [] posizione attuale (in unità da 0,1 secondi)
+        WORD_VAL arequest;		//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+        BYTE_VAL atimeout;		//      [] timeout attuale (in unita da 0,1 secondi)
+        };
+} TAP_DATA;
+// ===================================================================================
+TAP_SETUP devicetappa[MAXTAPP];
+BYTE      maxtapp = 0;
+BYTE      ixTapp;
+BYTE      ixPublish = 0;
+
+TAP_DATA  tapparella [MAXTAPP];
+// ===================================================================================
+#pragma udata
 // ===================================================================================
     enum _SM_COMMAND
     {
@@ -169,7 +212,10 @@ BYTE dlen;
         SM_WAIT_WRITE_CMD,      //  "@w[value][destin] write"
         SM_WAIT_WRITE_DESTIN,   //  "@w[value][destin] write"
         SM_WAIT_WRITE_QUERY,    //  "@t[destin] write test query"
-        SM_WAIT_WRITE_LOOP_I,   //  "@Z[value] write loop"
+		SM_WAIT_WRITE_TAPP_ADDR,//  "@u<address><pct>   comando tapparelle a %  
+		SM_WAIT_WRITE_TAPP_POS, //  "@u<address><pct>   comando tapparelle a %
+		SM_WAIT_WRITE_TAPP_SETUP,//  @U<opz>   setup tapparelle a %  <opz>   0=no   1=raccogli i dati   2=online   9=ripulisci
+		SM_WAIT_WRITE_LOOP_I,   //  "@Z[value] write loop"
         SM_WAIT_WRITE_LOOP,     //  "@z[value] write loop"
         SM_WAIT_TABSTART,       //  "@D[start]"
         SM_READ_DEQUEUE,        //  "@r
@@ -205,6 +251,7 @@ typedef union _SCS_OPTIONS {
 			BYTE		EfilterValue_B;	//v 4.4  valore byte di filtro   (0-FF)
 			BYTE_VAL	abbrevia;		// setup comandi brevi 00=FF:no  0x01:lettura    0x02:scrittura    0x03:tutto
 			BYTE		stream_timeout;	// stream timeout (complemento a 255 dei uS/4 ti timeout di stream
+			BYTE	    tapparelle_pct; // 0=no   1=raccogli i dati   2=consolida   3=work   9=ripulisci
         };
   unsigned char data[16];
 } SCS_OPTIONS;
@@ -242,8 +289,12 @@ BYTE    writeValue;
 BYTE    writeDest;
 BYTE    check;
 static BYTE         autocheck;			// 18.90
-// ===================================================================================
-extern	char rBufferIdxR;
+// ==============================================================================================================================
+extern	            char rBufferIdxR;	// pointer msgbuffer: prossimo messaggio da scodare (se diverso da idxW) 
+extern volatile far BYTE rBufferIdxW;	// pointer msgbuffer: prossimo messaggio da accodare da parte della routine di interrupt
+					char rBufferIdxP;	// pointer msgbuffer: ultimo messaggio scodato
+					char rBufferIdxInternal;	// pointer msgbuffer: ultimo messaggio scodato per uso interno
+// -------------------------------------------------------------------------------------------------------------------------------
 extern	BYTE filterByte_A;	//v 4.2  HB: 0000=byte filter off    0001=byte filter include    byte 0010=filter exclude
 							//v 4.2  HB  0100=exclude ack        1000=exclude equal tlgrm
 					        //v 4.2  LB: byte nr su cui filtrare (1-F) - comparato con rByteCount (0=filteroff)
@@ -252,8 +303,7 @@ extern BYTE filterByte_B;	//v 4.4  HB: 0000=byte filter off    0001=byte filter 
 							//v 4.4  LB: byte nr su cui filtrare (1-F) - comparato con rByteCount (0=filteroff)
 extern BYTE filterValue_B;	//v 4.4  valore byte di filtro   (0-FF)
 extern BYTE stream_timeout; //v 4.7  timeout di stream (il complemento a 255 diviso 4 è il timeout in uS)
-char rBufferIdxP;
-// ===================================================================================
+// ==============================================================================================================================
 extern void scsInit(void);
 extern void scsInterruptInput(void);
 extern void scsInterruptTimer(void);
@@ -267,7 +317,6 @@ extern volatile far BYTE scsMessageTx[SCSBUFLEN];
 //extern volatile far BYTE rBitCount;  // solo per test
 //     volatile     BYTE rInterrupt;  // solo per test
 //extern volatile far BYTE rByteCount; // solo per test
-extern volatile far BYTE rBufferIdxW;
 extern volatile far BYTE_VAL optionW;
  #define      W_COLLISION  bits.b1	//; 0=intercettare le collisioni      1=non intercettarle
  #define      W_ERROR      bits.b2	//; 0=scrittura ok					  1=errore collisione o timeout
@@ -287,6 +336,13 @@ extern volatile far BYTE_VAL optionR;
 extern          far int  wPeriodoDomin; //;; FFFF - periodo dominante  [write timer]
 extern          far int  wPeriodoRece;  //;; FFFF - periodo Recessivo [write timer]
 // ===================================================================================
+#ifdef UART1_INTERRUPT
+extern	far   char uartMessage[16];	// buffer rx uart1
+extern  volatile far   char uPtrW;			// ptr next mem
+extern  volatile far   char uMax;			// nr of chars
+char    uPtrR = 0;
+#endif
+// ===================================================================================
 #pragma udata DATARS
 char RS_Out_Buffer[160];
 // ===================================================================================
@@ -302,7 +358,9 @@ void puthexUSBwait(BYTE  data);
 void WriteByteEEP(BYTE Data, int Addr);
 void Read_eep_array (BYTE *Data, int Address, char Len);
 void Write_eep_array(BYTE *Data, int Address, char Len);
-void Write_config(void);
+void Write_config(BYTE mode);
+void Read_tapparelle(void);
+void Write_tapparelle(void);
 
 static void InitializeBoard(void);
 void TickInit(void);
@@ -317,6 +375,8 @@ void queueWrite(char dataLength);
 void DisplayScsTx(BYTE len);
 void DisplayScsRxBuffers(void);
 void UserProcess(void);
+void TapparellaAction(char ixTapp, char action);
+BYTE TapparellaGoto(char ixTapp, char position);
 
 // ===================================================================================
 ROM char menuScsPrompt[] =
@@ -472,6 +532,12 @@ static void InitializeBoard(void)
     TXSTA1 = 0b00100110;   // tx enabled
     RCSTA1 = 0b10010000;   // rx enabled
     PIR1bits.RC1IF = 0;
+#ifdef UART1_INTERRUPT
+    INTCONbits.PEIE = 1;	// Enable peripheral interrupts
+    PIE1bits.RC1IE = 1;
+    IPR1bits.RC1IP = 0;
+    PIR1bits.RC1IF = 0;
+#endif
 #endif
     // -----------------------------------------------------------------------------------
 
@@ -482,13 +548,9 @@ static void InitializeBoard(void)
 	
 	
 	
-	
-	
-	
-	
-	
     // -----------------------------------------------------------------------------------
-    RCONbits.IPEN = 1;       // interrupt priority enabled
+    RCONbits.IPEN = 1;      // interrupt priority enabled
+
 //  INTCON2bits.INTEDG0 = 1; // INT0 RB0 rising edge
     // -----------------------------------------------------------------------------------
     // comparator: c1inB (-) [rb1] input
@@ -595,6 +657,7 @@ void TickInit(void)
 // -----------------------------------------------------------------------------------
 void eepromInit(void)
 {
+	BYTE m;
         opt.opzioneModo   = 'X';        //    [A|X] : modo ascii | hex"
         opt.opzioneFiltro = 0;          //    [0|1|2|3|4] : filtro"
 		opt.EfilterByte_A = 0;			// 4.2  gestisce il byte filtering A
@@ -605,8 +668,23 @@ void eepromInit(void)
 		opt.abbrevia.Val = '0';
 		opt.stream_timeout = 191;
 		opt.eeVersion = EEPROM_VER;
-		Write_config();
+        opt.tapparelle_pct = 0;
+		Write_config(0); // scrive davvero
 		DelayMs(10);
+
+		m = 0;
+		while (m<MAXTAPP)
+		{
+			devicetappa[m].device = 0;
+			devicetappa[m].maxposition = 0;
+			tapparella[m].direction.Val = 0;	//      [] direzione (0=ferma  9=giu  8=su )
+			tapparella[m].position = 0;		//      [] posizione attuale (in unità da 0,1 secondi)
+			tapparella[m].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+			tapparella[m].timeout = 0;		//      [] timeout attuale (in unita da 0,1 secondi)
+			m++;
+		}
+		maxtapp = 0;
+		Write_tapparelle();
 
 		filterByte_A = 0;			// 4.2  gestisce il byte filtering A
 		filterValue_A = 0;			// 4.2  gestisce il byte filtering A
@@ -803,7 +881,7 @@ void InputMapping(void)
 
     choice0 = getUSBnowait();
 //  if (choice0 != 0)
-    if (uartRc != 0)
+    if (uartRc != 0)            // messaggio da ESP8266 <=============================
     {
         switch (sm_command)
         {
@@ -826,7 +904,7 @@ void InputMapping(void)
                      case 0x12:      // dummy firmware update
                           putcUSBwait('k');
                           break;
-                     case 0x15:      // per evitare memo in eeprom
+                     case 0x15:      // per evitare memo in eeprom e answer
 						  ee_avoid_memo = 1;
 						  ee_avoid_answer = 1;
 						  sm_command = SM_WAIT_HEADER;
@@ -886,19 +964,18 @@ void InputMapping(void)
                           sm_command = SM_WAIT_ABBREV_TYPE;
                           break;
                      case 'y':      // abbreviated write 4 bytes
-//						  if (opt.opzioneModo == 'X')
-//						  {
-							  writeLength = 4;
-							  dataLength = 0;
- 							  dataByte.data[dataLength++] = 0xA8;
-							  check = 0;
-							  sm_command = SM_WAIT_WRITE_DATA_BREVE;
-//						  }
-//						  else
-//						  {
-//						      putcUSBwait('E');
-//	                          sm_command = SM_WAIT_HEADER;
-//						  }
+						  writeLength = 4;
+						  dataLength = 0;
+						  dataByte.data[dataLength++] = 0xA8;
+						  check = 0;
+						  sm_command = SM_WAIT_WRITE_DATA_BREVE;
+                          break;
+                     case 'u':      // comando tapparelle a %  @u<address><pct>
+						  sm_command = SM_WAIT_WRITE_TAPP_ADDR;
+	                      dataTwin = 0;
+                          break;
+                     case 'U':      // setup tapparelle a %  @u<cmd>   0=no   1=raccogli i dati   2=online   9=ripulisci
+						  sm_command = SM_WAIT_WRITE_TAPP_SETUP;
                           break;
                      case 'V':      // write stream senza controllo collisioni
 						  optionW.W_COLLISION = 1; // controllo collisioni provvisoriamente tolto
@@ -910,7 +987,7 @@ void InputMapping(void)
                      case 'w':      // write single command
                           sm_command = SM_WAIT_WRITE_CMD;
                           break;
-                     case 't':      // write single test command
+                     case 't':      // write query command
                           sm_command = SM_WAIT_WRITE_QUERY;
                           break;
                      case 'Z':      // write loop test
@@ -991,24 +1068,12 @@ void InputMapping(void)
                      case 'S':       // byte stream timeout 
 						  stream_timeout = getUSBvalue();
 						  opt.stream_timeout = stream_timeout;
-						  Write_config();
+						  Write_config(ee_avoid_memo);
 						  if (ee_avoid_answer == 0)
 								putcUSBwait('k');
 						  sm_command = SM_WAIT_HEADER;
                           break;
-/*
-                     case 'S':       // high speed - 115200
-                          sm_command = SM_WAIT_HEADER;
-						  SPBRGH2  = baud_value[0][BAUD_RATE];
-		    			  SPBRG2   = baud_value[1][BAUD_RATE];
-                          break;
 
-                     case 's':       // low speed - 38400
-                          sm_command = SM_WAIT_HEADER;
-						  SPBRGH2  = baud_value[0][BAUD_RATE - 2];
-		    			  SPBRG2   = baud_value[1][BAUD_RATE - 2];
-                          break;
-*/
 // ---------------------------- opzioni di test - valide solo in ascii mode-----------
                      case 'h':
                           if (opt.opzioneModo == 'A')
@@ -1086,8 +1151,27 @@ void InputMapping(void)
 							  if (uart_echo == 2) putrsUSBwait("\r\nuart gate USB master");
 							  if (uart_echo == 3) putrsUSBwait("\r\nuart gate ESP master");
 #endif
+							  putrsUSBwait("\r\nGestione tapparelle %: ");
+							  switch (opt.tapparelle_pct)
+							  {
+							  case 0:
+								putrsUSBwait("NO");
+								break;
+							  case 1:
+								putrsUSBwait("scanning");
+								break;
+							  case 3:
+								  putrsUSBwait("SI & publ: ");
+	                              itoa(maxtapp,RS_Out_Buffer);
+		                          putsUSBwait(RS_Out_Buffer);
+								break;
+							  case 4:
+								  putrsUSBwait("SI npub: ");
+	                              itoa(maxtapp,RS_Out_Buffer);
+		                          putsUSBwait(RS_Out_Buffer);
+								break;
+							  }
                               putrsUSBwait("\r\n");
-
 						  }
                           else
                               putcUSBwait('E');
@@ -1133,7 +1217,7 @@ void InputMapping(void)
                               itoa((int)opt.Vref,RS_Out_Buffer);
                               putsUSBwait(RS_Out_Buffer);
                               putrsUSBwait("\r\n");
-							  Write_config();
+							  Write_config(ee_avoid_memo);
                           }
                           else
                               putcUSBwait('E');
@@ -1148,12 +1232,12 @@ void InputMapping(void)
                               if (x == '-')
                               {
                                   opt.Vref--;
-								  Write_config();
+								  Write_config(ee_avoid_memo);
                               }
                               if (x == '+')
                               {
                                   opt.Vref++;
-								  Write_config();
+								  Write_config(ee_avoid_memo);
                               }
                               CVRCONbits.CVR = opt.Vref;   // ref value from 0 to 31
                               putrsUSBwait("\r\nInternal Vref: ");
@@ -1167,16 +1251,6 @@ void InputMapping(void)
                           break;
 #endif
 
-						  //                     case 's':       // sbilancia rx pointer x test
-//                          if  (opt.opzioneModo == 'A')
-//                          {
-//                              IncrementBufferPtr();
-//                              putcUSBwait('k');
-//                          }
-//                          else
-//                              putcUSBwait('E');
-//                          sm_command = SM_WAIT_HEADER;
-//                          break;
 // ----------------------- fine opzioni di test --------------------------------------
                      case 'p':       // rx msg fasullo
 						  if (rBufferIdxR == 0) rBufferIdxR = SCSBUFMAX;
@@ -1230,7 +1304,7 @@ void InputMapping(void)
                      if (opt.opzioneModo != choice0)
 					 {
 						 opt.opzioneModo = choice0;
-						 Write_config();
+						 Write_config(ee_avoid_memo);
 					 }
 					  if (ee_avoid_answer == 0)
 							putcUSBwait('k');
@@ -1251,7 +1325,7 @@ void InputMapping(void)
 							 opt.EfilterByte_A |= 0x40;      // include messaggi ack
 						 else
 							 opt.EfilterByte_A &= 0xBF;      // esclude messaggi ack
-						 Write_config();
+						 Write_config(ee_avoid_memo);
 						 filterByte_A = opt.EfilterByte_A;
                             //v 4.2  HB: 0000=byte filter off    0001=byte filter include    byte 0010=filter exclude
 							//v 4.2  HB  0100=exclude ack        1000=exclude equal tlgrm
@@ -1271,7 +1345,7 @@ void InputMapping(void)
                      if (opt.abbrevia.Val != choice0)
 					 {
 						 opt.abbrevia.Val = choice0;
-						 Write_config();
+						 Write_config(ee_avoid_memo);
 					 }
 					  if (ee_avoid_answer == 0)
 							putcUSBwait('k');
@@ -1300,7 +1374,7 @@ void InputMapping(void)
 					 {
 						 opt.EfilterByte_A	 = 0;
 						 filterByte_A = 0;
-						 Write_config();
+						 Write_config(ee_avoid_memo);
 					 }
 					  if (ee_avoid_answer == 0)
 							putcUSBwait('k');
@@ -1360,7 +1434,7 @@ void InputMapping(void)
                      thisByte += thisHalf;
                      dataByte.data[dataLength++] = thisByte;
                      opt.EfilterValue_A = thisByte;
-					 Write_config();
+					 Write_config(ee_avoid_memo);
 					 filterByte_A = opt.EfilterByte_A;
 					 filterValue_A = opt.EfilterValue_A;
 					  if (ee_avoid_answer == 0)
@@ -1395,7 +1469,7 @@ void InputMapping(void)
 					 {
 						 opt.EfilterByte_B	 = 0;
 						 filterByte_B = 0;
-						 Write_config();
+						 Write_config(ee_avoid_memo);
 					 }
 					  if (ee_avoid_answer == 0)
 							putcUSBwait('k');
@@ -1449,7 +1523,7 @@ void InputMapping(void)
                      thisByte += thisHalf;
                      dataByte.data[dataLength++] = thisByte;
                      opt.EfilterValue_B = thisByte;
-					 Write_config();
+					 Write_config(ee_avoid_memo);
 					 filterByte_B = opt.EfilterByte_B;
 					 filterValue_B = opt.EfilterValue_B;
 					  if (ee_avoid_answer == 0)
@@ -1567,7 +1641,237 @@ void InputMapping(void)
 				  }
                  break;
 
-            case SM_WAIT_WRITE_DATA:  //    "@W[1-F][data] : write"
+			case SM_WAIT_WRITE_TAPP_SETUP:	// setup tapparelle a %  @u<cmd>   0=no   1=raccogli i dati   2=online   9=ripulisci
+                 switch (choice0)
+                 {
+				 case '2':  // consolida e apre (se sono state ABBASSATE e alzate tapparelle
+					 m = 0;
+					 n = 0;
+					 while (m < maxtapp)
+					 {
+						if (devicetappa[m].device)
+						{
+							if (devicetappa[m].maxposition < tapparella[m].position)
+								devicetappa[m].maxposition = tapparella[m].position;
+							didx = devicetappa[m].device;
+							devc[didx] = 9;
+							if (devicetappa[m].maxposition > 0)
+								n++;
+                            tapparella[m].direction.Val = 0x80;
+						}
+						m++;
+					 }
+
+					 Write_tapparelle();
+					 if (n == 0)
+						choice0 = '0'; // nessuna tapparella
+					 else
+						choice0 = '3'; // tapparelle pct trovate
+
+				 case '0':	// close
+				 case '1':  // data collection
+				 case '3':  // open
+				 case '4':  // open without publish position
+                     opt.tapparelle_pct = choice0 - '0';
+					 Write_config(0); // scrive sempre
+					 if (ee_avoid_answer == 0)
+							putcUSBwait('k');
+					break;
+				 case '5':  // lista ascii
+     				if (opt.opzioneModo == 'A')
+					{
+						 putrsUSBwait("\r\n\r\nTapparelle: ");
+						 m = 0;
+						 while (m < maxtapp)
+						 {
+							if (devicetappa[m].device)
+							{
+								putrsUSBwait("\r\n[");
+								puthexUSBwait(devicetappa[m].device);
+								putrsUSBwait("] max:");
+								itoa(devicetappa[m].maxposition,RS_Out_Buffer);
+								putsUSBwait(RS_Out_Buffer);	 
+								putrsUSBwait(" now:");
+								itoa(tapparella[m].position,RS_Out_Buffer);
+								putsUSBwait(RS_Out_Buffer);	 
+								putrsUSBwait(" dir:");
+								puthexUSBwait(tapparella[m].direction.Val);	 
+								putrsUSBwait(" req:");
+								itoa(tapparella[m].request,RS_Out_Buffer);
+								putsUSBwait(RS_Out_Buffer);	 
+								putrsUSBwait(" out:");
+								itoa(tapparella[m].timeout,RS_Out_Buffer);
+								putsUSBwait(RS_Out_Buffer);	 
+							}
+							m++;
+						 }
+						 putrsUSBwait("\r\n");
+					}
+					break;
+
+				 case '6':  // dati singola tapparella hex
+     				if (opt.opzioneModo == 'X')
+					{
+						n = getUSBwait();
+						m = 0;
+						b = 0;
+						while (m < maxtapp)
+						{
+							if (devicetappa[m].device == n)
+							{
+								putcUSBwait('[');
+
+								putcUSBwait(devicetappa[m].amaxposition.byte.HB);
+								putcUSBwait(devicetappa[m].amaxposition.byte.LB);
+
+								putcUSBwait(tapparella[m].aposition.byte.HB);
+								putcUSBwait(tapparella[m].aposition.byte.LB);
+
+								putcUSBwait(tapparella[m].direction.Val);
+
+								putcUSBwait(tapparella[m].arequest.byte.HB);
+								putcUSBwait(tapparella[m].arequest.byte.LB);
+
+								putcUSBwait(tapparella[m].timeout);
+								m = maxtapp;
+								b = 1;
+							}
+							m++;
+						}
+					 // non esiste
+						if (b == 0)
+						{
+							putcUSBwait('[');
+							for (m=0; m<8; m++)
+								putcUSBwait(0x00);
+						}
+					}
+					break;
+
+				 case '7':  // ri-pubblica tutte le posizioni
+					 m = 0;
+					 while (m < maxtapp)
+					 {
+                        tapparella[m].direction.bits.b7 = 0;
+						m++;
+					 }
+				 	 break;
+
+				 case '9':
+					 m = 0;
+					 while (m<MAXTAPP)
+					 {
+						devicetappa[m].device = 0;
+						devicetappa[m].maxposition = 0;
+						tapparella[m].direction.Val = 0;//      [] direzione (0=ferma  9=giu  8=su )
+						tapparella[m].position = 0;		//      [] posizione attuale (in unità da 0,1 secondi)
+						tapparella[m].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+						tapparella[m].timeout = 0;		//      [] timeout attuale (in unita da 0,1 secondi)
+						m++;
+					 }
+					 maxtapp = 0;
+					 Write_tapparelle();
+ 	 				 opt.tapparelle_pct = 0;
+					 Write_config(0); // scrive sempre
+					 if (ee_avoid_answer == 0)
+							putcUSBwait('k');
+					 break;
+
+				 default:
+                     putcUSBwait('E');
+					 break;
+				 }
+                 sm_command = SM_WAIT_HEADER;
+                 break;
+
+
+			case SM_WAIT_WRITE_TAPP_ADDR:	// comando tapparelle a %  @u<address><pct>
+                 if (opt.opzioneModo == 'X')
+                 {
+                     dataByte.DestinationAddress = choice0;
+                     sm_command = SM_WAIT_WRITE_TAPP_POS;
+                     break;
+                 }
+                 if ((choice0 >= '0') && (choice0 <= '9'))
+                     thisHalf = choice0 - '0';
+                 else
+                 if ((choice0 >= 'A') && (choice0 <= 'F'))
+                     thisHalf = choice0 - 'A' + 10;
+                 else
+                 if ((choice0 >= 'a') && (choice0 <= 'f'))
+                     thisHalf = choice0 - 'a' + 10;
+                 else
+                 {
+                     putcUSBwait('E');
+                     sm_command = SM_WAIT_HEADER;
+                     break;
+                 }
+                 if (dataTwin)
+                 {
+                     thisByte += thisHalf;
+                     dataByte.DestinationAddress = thisByte;
+                     dataTwin = 0;
+                     sm_command = SM_WAIT_WRITE_TAPP_POS;
+                 }
+                 else
+                 {
+                     thisByte = thisHalf;
+                     thisByte<<=4;
+                     dataTwin = 1;
+                 }
+				 break;
+
+			case SM_WAIT_WRITE_TAPP_POS:	// comando tapparelle a %  @u<address><pct>
+                 if (opt.opzioneModo == 'X')
+                 {
+					 if (0 == TapparellaGoto(dataByte.DestinationAddress, choice0) )
+					 {
+						 if (ee_avoid_answer == 0)
+							putcUSBwait('k');
+					 }
+					 else
+						 if (ee_avoid_answer == 0)
+		                    putcUSBwait('E');
+                     sm_command = SM_WAIT_HEADER;
+                     break;
+                 }
+                 if ((choice0 >= '0') && (choice0 <= '9'))
+                     thisHalf = choice0 - '0';
+                 else
+                 if ((choice0 >= 'A') && (choice0 <= 'F'))
+                     thisHalf = choice0 - 'A' + 10;
+                 else
+                 if ((choice0 >= 'a') && (choice0 <= 'f'))
+                     thisHalf = choice0 - 'a' + 10;
+                 else
+                 {
+                     putcUSBwait('E');
+                     sm_command = SM_WAIT_HEADER;
+                     break;
+                 }
+                 if (dataTwin)
+                 {
+                     thisByte += thisHalf;
+					 if (0 == TapparellaGoto(dataByte.DestinationAddress, thisByte))
+					 {
+						 if (ee_avoid_answer == 0)
+							putcUSBwait('k');
+					 }
+					 else
+						 if (ee_avoid_answer == 0)
+		                    putcUSBwait('E');
+                     dataTwin = 0;
+                     sm_command = SM_WAIT_HEADER;
+                 }
+                 else
+                 {
+                     thisByte = thisHalf;
+                     thisByte<<=4;
+                     dataTwin = 1;
+                 }
+				 break;
+
+            case SM_WAIT_WRITE_DATA:		//    "@W[1-F][data] : write"
                  if (opt.opzioneModo == 'X')
                  {
                      dataByte.data[dataLength++] = choice0;
@@ -1722,14 +2026,8 @@ void InputMapping(void)
                          break;
                      }
                  }
-//        BYTE    TopByte;
-//        BYTE	  DestinationAddress;
-//        BYTE	  SourceAddress;
-//        BYTE    CommandType;
-//        BYTE    CommandValue;
-//        BYTE    CheckByte;
-//        BYTE    BottomByte;
-                 dataByte.TopByte = 0xA8;
+
+				 dataByte.TopByte = 0xA8;
                  dataByte.DestinationAddress = writeDest;
                  dataByte.SourceAddress = 0x00;
 
@@ -1796,6 +2094,17 @@ void InputMapping(void)
 					{
 						devc[didx++] = 0xFF;
 					}
+// predisporre eventuali tapparelle
+					m = 0;
+					while (m < maxtapp)
+					{
+						if (devicetappa[m].device)
+						{
+							didx = devicetappa[m].device;
+							devc[didx] = 9;
+						}
+						m++;
+					}
 					didx = 0;
 				 }
 				 else
@@ -1830,7 +2139,7 @@ void InputMapping(void)
                  break;
 
 
-            case SM_WAIT_WRITE_QUERY:  //  "@t[destin] write test query"
+            case SM_WAIT_WRITE_QUERY:  //  "@t[destin] write query"
                  if (opt.opzioneModo == 'X')
                  {
                      writeDest  = choice0;
@@ -1870,14 +2179,8 @@ void InputMapping(void)
                          break;
                      }
                  }
-//        BYTE    TopByte;
-//        BYTE	  DestinationAddress;
-//        BYTE	  SourceAddress;
-//        BYTE    CommandType;
-//        BYTE    CommandValue;
-//        BYTE    CheckByte;
-//        BYTE    BottomByte;
-                 dataByte.TopByte = 0xA8;
+
+				 dataByte.TopByte = 0xA8;
                  dataByte.DestinationAddress = writeDest;
                  dataByte.SourceAddress = 0x00;
 				 
@@ -2000,11 +2303,16 @@ void InputMapping(void)
 // ******************************************************************************/
 // * transfer info from input & status to logic output                          */
 // ******************************************************************************/
+// ===================================================================================
 void TransferFunction(void)
 {
-    if (PIR1bits.TMR1IF) //   32mSec
+DWORD percent;
+BYTE  try;
+
+	if (PIR1bits.TMR1IF) //   32mSec
     {
-        SystemTicks++;
+// -----------------------------------------------------------------------------------------------------------
+		SystemTicks++;
         if (SystemTicks > 31) // 1,024 secondi
         {
             SystemTicks = 0;
@@ -2032,6 +2340,106 @@ void TransferFunction(void)
             LED_SYS1= 0;
 #endif
         }
+// -----------------------------------------------------------------------------------------------------------
+
+
+		TappaPublishTicks++;
+		if ((opt.tapparelle_pct == 3) && (TappaPublishTicks > 6) && (sm_stato ==  SM_LOG_WAIT))   // ogni 230mSec
+		{
+	  		TappaPublishTicks = 0;
+
+			try=0;
+			while (try < maxtapp)
+			{
+				if (tapparella[ixPublish].direction.bits.b7 == 0)
+					try = maxtapp;
+				else
+				{
+					if (++ixPublish >= maxtapp)	ixPublish = 0;
+					try++;
+				}
+			}
+
+			if (tapparella[ixPublish].direction.bits.b7 == 0)
+			{
+				percent = tapparella[ixPublish].position;
+				percent *= 100;
+				percent /= devicetappa[ixPublish].maxposition;
+				if (opt.opzioneModo == 'A')
+				{
+					putrsUSBwait("\r\nu");	// length
+					puthexUSBwait(devicetappa[ixPublish].device);	// device
+					puthexUSBwait((BYTE)percent);					// percent position
+				}
+				else
+				{
+					putcUSBwait('u');	// stamp
+					putcUSBwait(devicetappa[ixPublish].device);	// device
+					putcUSBwait((BYTE)percent);					// percent position
+				}
+				tapparella[ixPublish].direction.bits.b7 = 1;
+			}
+			if (++ixPublish >= maxtapp)	ixPublish = 0;
+		}
+
+		TappaMoveTicks++;
+		if ((opt.tapparelle_pct) && (TappaMoveTicks > 2))   // ogni 100mSec
+		{
+	  		TappaMoveTicks = 0;
+			ixTapp = 0;
+			while (ixTapp < maxtapp)
+			{
+				if (tapparella[ixTapp].direction.half.LS == DOWN)  // down
+				{
+					if (tapparella[ixTapp].position > 0)
+					{
+						tapparella[ixTapp].position--;
+						tapparella[ixTapp].direction.bits.b7 = 0;
+					}
+					else
+						tapparella[ixTapp].timeout++;
+					if ((tapparella[ixTapp].request != 0xFFFF) && (tapparella[ixTapp].position <= tapparella[ixTapp].request))
+					{
+						// fermare la tapparella 
+						if (opt.tapparelle_pct > 2) TapparellaAction(devicetappa[ixTapp].device, STOP);
+						tapparella[ixTapp].request = 0xFFFF;
+					}
+				}
+				else
+				if (tapparella[ixTapp].direction.half.LS == UP)  // up
+				{
+					if ((tapparella[ixTapp].position < devicetappa[ixTapp].maxposition) || (opt.tapparelle_pct == 1))
+					{
+						tapparella[ixTapp].position++;
+						tapparella[ixTapp].direction.bits.b7 = 0;
+					}
+					else
+						tapparella[ixTapp].timeout++;
+					if ((tapparella[ixTapp].request != 0xFFFF) && (tapparella[ixTapp].position >= tapparella[ixTapp].request))
+					{
+						// fermare la tapparella 
+						if (opt.tapparelle_pct > 2) TapparellaAction(devicetappa[ixTapp].device, STOP);
+						tapparella[ixTapp].request = 0xFFFF;
+					}
+				}
+				else
+				{
+					tapparella[ixTapp].timeout = 0;
+					tapparella[ixTapp].request = 0xFFFF;
+					tapparella[ixTapp].direction.half.LS = 0;
+				}
+
+				if (tapparella[ixTapp].timeout > 50)	// timeout 5 secondi
+				{
+					tapparella[ixTapp].timeout = 0;
+					tapparella[ixTapp].request = 0xFFFF;
+					tapparella[ixTapp].direction.half.LS = 0;
+					TapparellaAction(devicetappa[ixTapp].device, STOP);  /// ??? sarà meglio ???
+				}
+				ixTapp++;
+			}
+		}
+// -----------------------------------------------------------------------------------------------------------
     }
 }
 // ===================================================================================
@@ -2090,11 +2498,138 @@ BYTE increment;
 
 	increment = 0;
 
-    if  (rBufferIdxR != rBufferIdxW)
+    if  (rBufferIdxR != rBufferIdxW)  // qualcosa da leggere
 	{
-		if (MsgValido())
+		if (MsgValido())   // messaggio dal BUS  SCS <=============================
 		{
 			rBufferIdxP = rBufferIdxR;
+
+			if  (rBufferIdxR != rBufferIdxInternal)  // se non ancora trattato internamente
+			{
+				rBufferIdxInternal = rBufferIdxR;
+
+// LL a8 55 00 12 08 xx a3
+// -----------------------------aggiorna tabella dispositivi-------------------------------
+				if ((scsMessageRx[rBufferIdxR][0] == 7) &&
+					(scsMessageRx[rBufferIdxR][1] == 0xA8) &&
+					(scsMessageRx[rBufferIdxR][4] == 0x12) &&
+					(scsMessageRx[rBufferIdxR][7] == 0xA3) )
+				{
+					if (scsMessageRx[rBufferIdxR][2] < 0xB0)
+						didx = scsMessageRx[rBufferIdxR][2];
+					else
+						didx = scsMessageRx[rBufferIdxR][3];
+
+					if ((didx > 0) && (didx < 180)) // (sizeof(devc)))
+					{
+						switch (scsMessageRx[rBufferIdxR][5])
+						{
+						case 0:
+						case 0x01:
+							if (devc[didx] == 0xFF)
+								devc[didx] = 1;
+							break;
+						case 0x03:
+						case 0x04:
+							devc[didx] = 3;
+							break;
+// -----------------------------aggiorna anche tabella tapparelle-----------------------------
+						case 0x08:					// alza
+							if (devc[didx] != 9) devc[didx] = 8;
+							if (opt.tapparelle_pct)
+							{
+								ixTapp = 0;
+								while (ixTapp < maxtapp)
+								{
+									if (devicetappa[ixTapp].device == didx)
+									{
+										if (tapparella[ixTapp].direction.half.LS == 0)
+										{
+//											tapparella[ixTapp].direction.half.LS = UP;
+											tapparella[ixTapp].direction.Val = UP; // pubblicazione immediata
+											tapparella[ixTapp].timeout = 0;
+										}
+										ixTapp = maxtapp;
+									}
+									else
+										ixTapp++;
+								}
+							}
+							break;
+
+						case 0x09:					// abbassa
+							if (devc[didx] != 9) devc[didx] = 8;
+							f = 0;
+							if (opt.tapparelle_pct)
+							{
+								ixTapp = 0;
+								while (ixTapp < maxtapp)
+								{
+									if (devicetappa[ixTapp].device == didx)
+									{
+										if (tapparella[ixTapp].direction.half.LS == 0)
+										{
+											tapparella[ixTapp].direction.Val = DOWN; // pubblicazione immediata
+//											tapparella[ixTapp].direction.half.LS = DOWN;
+											tapparella[ixTapp].timeout = 0;
+										}
+										f = 1;
+										ixTapp = maxtapp;
+									}
+									else
+										ixTapp++;
+								}
+								if (( f == 0 ) && (opt.tapparelle_pct == 1) && (maxtapp < MAXTAPP)) // censimento tapparella?
+								{
+									devicetappa[maxtapp].device = didx;
+									tapparella[maxtapp].direction.half.LS = DOWN;
+									tapparella[maxtapp].timeout = 0;
+									tapparella[maxtapp].position = 0;
+									tapparella[maxtapp].request = 0xFFFF;
+									maxtapp++;
+								}
+							}
+							break;
+
+						case 0x0A:                  // stop
+							if (devc[didx] != 9) devc[didx] = 8;
+							if (opt.tapparelle_pct)
+							{
+								ixTapp = 0;
+								while (ixTapp < maxtapp)
+								{
+									if (devicetappa[ixTapp].device == didx)
+									{
+//										if (tapparella[ixTapp].direction.Val != 0)
+										{
+											tapparella[ixTapp].direction.half.LS = 0;
+											tapparella[ixTapp].timeout = 0;
+											tapparella[ixTapp].request = 0xFFFF;
+										}
+										ixTapp = maxtapp;
+									}
+									else
+										ixTapp++;
+								}
+							}
+							break;
+// -------------------------------------------------------------------------------------------
+						default:
+							if ((scsMessageRx[rBufferIdxR][5] & 0x0F) == 0x0D)
+								devc[didx] = 3;
+							break;
+						}
+					}
+				}
+// -------------------------------------------------------------------------------------------
+
+
+			}	// se non ancora trattato internamente
+
+
+
+
+
 
 			if (sm_command ==  SM_READ_DEQUEUE)
 			{
@@ -2141,7 +2676,8 @@ BYTE increment;
 					putrsUSBwait("\r\nTest O.K.!");
 				}
 				increment = 1;
-			}
+			}  // (sm_stato   ==  SM_TEST_MODE)
+
 
 //   A8 <dest> <source> <type> <cmd> XX A3
 //          dest B0-.. pulsanti
@@ -2159,49 +2695,12 @@ BYTE increment;
 //BYTE devc[180];	// 0xFF:empty    01:switch    03:dimmer    08:tapparella
 //BYTE didx;
 
-//			if (sm_stato   ==  SM_READ_WAIT)
-			{
-				if ((scsMessageRx[rBufferIdxR][0] == 7) &&
-					(scsMessageRx[rBufferIdxR][1] == 0xA8) &&
-					(scsMessageRx[rBufferIdxR][4] == 0x12) &&
-					(scsMessageRx[rBufferIdxR][7] == 0xA3) )
-				{
-					if (scsMessageRx[rBufferIdxR][2] < 0xB0)
-						didx = scsMessageRx[rBufferIdxR][2];
-					else
-						didx = scsMessageRx[rBufferIdxR][3];
 
-					if ((didx > 0) && (didx < 180)) // (sizeof(devc)))
-					{
-						switch (scsMessageRx[rBufferIdxR][5])
-						{
-						case 0:
-						case 0x01:
-							if (devc[didx] == 0xFF)
-								devc[didx] = 1;
-							break;
-						case 0x03:
-						case 0x04:
-							devc[didx] = 3;
-							break;
-						case 0x08:
-						case 0x09:
-						case 0x0A:
-							devc[didx] = 8;
-							break;
-						default:
-							if ((scsMessageRx[rBufferIdxR][5] & 0x0F) == 0x0D)
-								devc[didx] = 3;
-							break;
-						}
-					}
-				}
-			}
 
 			if (sm_stato   ==  SM_READ_WAIT)
 			{
 				AnswerMsg();
-				increment = 1;
+				increment = 1;		// messaggio scodato
 				sm_stato = SM_HOME;
 			}
 
@@ -2212,7 +2711,7 @@ BYTE increment;
 				else
 					AnswerMsg();
 
-				increment = 1;
+				increment = 1;		// messaggio scodato
 			}
 
 			if (sm_stato   ==  SM_ECHO_ON)
@@ -2225,16 +2724,18 @@ BYTE increment;
         			dataByte.data[m++] = scsMessageRx[rBufferIdxR][f++];
 				}
 				queueWrite(l);
-				increment = 1;
+				increment = 1;		// messaggio scodato
 			}
 			if (increment)
-				IncrementBufferPtr();
-		}
+				IncrementBufferPtr();  // scodato
+
+		}		// (MsgValido())
+
 		else
-			IncrementBufferPtr();
+			IncrementBufferPtr();		// msg non valido
 	}
 	else
-	{
+	{				// nessun messaggio da scodare
 		if (sm_command ==  SM_READ_DEQUEUE)
 		{
 			AnswerMsg();
@@ -2273,9 +2774,17 @@ BYTE c;
             RCSTA1bits.CREN = 0;
             RCSTA1bits.CREN = 1;
         }
+
+#ifdef UART1_INTERRUPT
+        while (uMax == 0)  ClrWdt();
+		c = uartMessage[uPtrR++];
+        if (uPtrR > 15) uPtrR = 0;
+		uMax--;
+#else
         while (PIR1bits.RC1IF == 0)  ClrWdt();
         c = RCREG1;
         PIR1bits.RC1IF = 0;
+#endif
         uartRc = 1;
         return c;
     }
@@ -2283,6 +2792,7 @@ BYTE c;
     uartRc = 0;
     return 0;
 }
+
 // ===================================================================================
 BYTE getUSBvalue(void)
 {
@@ -2346,10 +2856,19 @@ BYTE c;
         RCSTA1bits.CREN = 0;
         RCSTA1bits.CREN = 1;
     }
-    if (PIR1bits.RC1IF != 0)
+
+#ifdef UART1_INTERRUPT
+	if (uMax > 0)
+	{
+		c = uartMessage[uPtrR++];
+        if (uPtrR > 15) uPtrR = 0;
+		uMax--;
+#else
+	if (PIR1bits.RC1IF != 0)
     {
 		PIR1bits.RC1IF = 0;
 		c = RCREG1;
+#endif
 		uartRc = 1;
 		uart_in_use = 1;
 
@@ -2509,6 +3028,11 @@ void main(void)
     {
 		eepromInit();
     }
+	else
+		Read_tapparelle();
+
+	if (maxtapp > MAXTAPP) maxtapp = 0;
+	if (opt.tapparelle_pct > 9) opt.tapparelle_pct = 0;
 
 	if (opt.abbrevia.Val == 0xFF)	opt.abbrevia.Val = '0';
 	filterByte_A = opt.EfilterByte_A;
@@ -2516,6 +3040,16 @@ void main(void)
 	filterByte_B = opt.EfilterByte_B;
 	filterValue_B = opt.EfilterValue_B;
 	stream_timeout	= opt.stream_timeout;
+
+	i = 0;
+	while (i<MAXTAPP)
+	{
+		tapparella[i].direction.Val = 0;	//      [] direzione (0=ferma  9=giu  8=su )
+		tapparella[i].position = 0;		//      [] posizione attuale (in unità da 0,1 secondi)
+		tapparella[i].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+		tapparella[i].timeout = 0;		//      [] timeout attuale (in unita da 0,1 secondi)
+		i++;
+	}
 
 	ClrWdt();
 
@@ -2551,6 +3085,98 @@ void main(void)
 
 
 
+
+
+
+
+
+
+
+
+// ===========================comando @u di posizionamento da esp8266=============================
+BYTE TapparellaGoto(char device, char position) // return 0=ok
+{
+	DWORD required;
+	WORD  movement;
+	BYTE  action;
+    BYTE  newdirection = 0;
+
+	if (opt.tapparelle_pct < 3) 
+		return 1;
+
+	if (position > 100) position = 100;	// posizione percentuale richiesta
+	required = position;
+	ixTapp = 0;
+	while (ixTapp < maxtapp)
+	{
+		if (devicetappa[ixTapp].device == device)
+		{
+			required *=	devicetappa[ixTapp].maxposition;
+			required /=	100;				// posizione assoluta richiesta
+			if (tapparella[ixTapp].position > (WORD)required)
+			{
+				movement = tapparella[ixTapp].position - (WORD)required;
+//				if (movement > 9)
+					newdirection = DOWN;
+//				else
+//					return 0; // movimento non necessario
+			}
+			else
+			{
+				movement = (WORD)required - tapparella[ixTapp].position;
+				if (movement > 0)
+					newdirection = UP;
+				else
+				{
+					tapparella[ixTapp].request = 0xFFFF;
+					tapparella[ixTapp].direction.Val = 0;
+					TapparellaAction(device, STOP);
+					return 0;
+				}
+			}
+
+			if (tapparella[ixTapp].direction.half.LS == 0)  // tapparella ferma
+			{
+				tapparella[ixTapp].request = (WORD) required;
+				tapparella[ixTapp].direction.half.LS = newdirection;
+				TapparellaAction(device, newdirection);
+				return 0;
+			}
+			else
+			{		// gia in movimento <-----------------------------
+				if (tapparella[ixTapp].direction.half.LS == newdirection) // nella giusta direzione
+				{
+					tapparella[ixTapp].request = (WORD) required;
+					return 0;
+				}
+				else
+				{ // gia in movimento  ---- nella direzione opposta
+					TapparellaAction(device, STOP);
+//					DelayMs(80);
+//					tapparella[ixTapp].request = (WORD) required;
+//					tapparella[ixTapp].direction.half.LS = newdirection;
+//					TapparellaAction(device, newdirection);
+					return 0;
+				}
+			}
+		}
+		ixTapp++;
+	}
+	return 1;
+}
+// ===================================================================================
+void TapparellaAction(char ixTapp, char action)
+{
+     dataByte.TopByte = 0xA8;
+     dataByte.DestinationAddress = ixTapp;
+     dataByte.SourceAddress = 0x00;
+     dataByte.CommandType = CMDTYPE_SET;
+	 dataByte.CommandValue = action;
+     dataByte.CheckByte = dataByte.data[1]^dataByte.data[2]^dataByte.data[3]^dataByte.data[4];
+     dataByte.BottomByte = 0xA3;
+     queueWrite(7);
+}
+// ===================================================================================
 void queueWrite(char dataLength)
 {
 BYTE clear;
@@ -2684,10 +3310,24 @@ void Write_eep_array(BYTE *Data, int Address, char Len)
     }
 }
 // ===================================================================================
-void Write_config(void)
+void Write_config(BYTE mode)  // 0= scrivi      1=evita di scrivere
 {
-	if (ee_avoid_memo == 0)
+	if (mode == 0)
 		Write_eep_array(&opt, EE_CONFIG, (char) sizeof(opt));
+}
+// ===================================================================================
+void Read_tapparelle(void)
+{
+    maxtapp = Read_b_eep (EE_TAPPA_SETUP);
+    Busy_eep ();
+	Read_eep_array(&devicetappa, EE_TAPPA_SETUP+1, MAXTAPP);
+}
+// ===================================================================================
+void Write_tapparelle(void)
+{
+    Write_b_eep (EE_TAPPA_SETUP, maxtapp);
+    Busy_eep ();
+	Write_eep_array(&devicetappa, EE_TAPPA_SETUP+1, MAXTAPP);
 }
 // ===================================================================================
 BYTE btohexa_high(BYTE b)
