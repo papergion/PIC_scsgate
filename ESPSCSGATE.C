@@ -1,8 +1,10 @@
 #define TITLE    "ScsGAte"
-#define VERSION  "SCS 18.91"
+#define VERSION  "SCS 18.92"
 #define EEPROM_VER	0x8D	// per differenziare scs e knx
 
 // #define ECHO
+
+// 18.92 - sistemata la prima inizializzazione della eeprom
 // 18.91 - rivista la gestione dei filtri - loop su 0xFF successivi
 // 18.90 - nel comando @W accetta carattere K ad indicare checksum calcolato, @0xFF per evitare lampeggio led
 // 18.90 - setup per comandi brevi in scrittura @Y2 in lettura @Y1  in entrambe @Y3
@@ -87,7 +89,7 @@
     #pragma config XINST=OFF
 #endif
 // ===================================================================================
-#define EE_EEPROM_VER     0x00   // versione eeprom e configurazione
+#define EE_CONFIG     0x00   // indirizzo eeprom configurazione
 // ===================================================================================
 
 // ========================STATO monitor==============================================
@@ -566,10 +568,10 @@ void eepromInit(void)
 		opt.EfilterValue_A = 0;			// 4.2  gestisce il byte filtering A
 		opt.EfilterByte_B = 0;			// 4.4  gestisce il byte filtering B
 		opt.EfilterValue_B = 0;			// 4.4  gestisce il byte filtering B
-		opt.eeVersion = EEPROM_VER;
 		opt.Vref = 20;
 		opt.abbrevia.Val = '0';
 		opt.stream_timeout = 191;
+		opt.eeVersion = EEPROM_VER;
 		Write_config();
 		DelayMs(10);
 
@@ -2198,8 +2200,9 @@ void main(void)
 
 	opt.Vref = 20;     // 3,3V                ogni step 3.3/32 = 0,10Volt - 2,00V
 
+    DelayMs(100);
     ClrWdt();
-	Read_eep_array(&opt, EEPROM_VER, (char) sizeof(opt));
+	Read_eep_array(&opt, EE_CONFIG, (char) sizeof(opt));
 
     if (opt.eeVersion != EEPROM_VER)
     {
@@ -2217,7 +2220,7 @@ void main(void)
     InitializeBoard();    // Initialize hardware
 
     TickInit();                // Initialize timers
-    DelayMs(250);
+    DelayMs(150);
 
     Ticks = 0;
 
@@ -2375,7 +2378,7 @@ void Write_eep_array(BYTE *Data, int Address, char Len)
 // ===================================================================================
 void Write_config(void)
 {
-	Write_eep_array(&opt, EEPROM_VER, (char) sizeof(opt));
+	Write_eep_array(&opt, EE_CONFIG, (char) sizeof(opt));
 }
 // ===================================================================================
 BYTE btohexa_high(BYTE b)
