@@ -1,11 +1,16 @@
 #define TITLE    "ScsGAte"
-#define VERSION  "SCS 18.68"
+#define VERSION  "SCS 18.90"
 #define EEPROM_VER	0x8D	// per differenziare scs e knx
 
 // #define ECHO
-// 18.68 timeout di stream gestito a parametro configurabile 
-// 18.67 - setup per comandi brevi in scrittura @Y2 in lettura @Y1  in entrambe @Y3
+// 18.90 - nel comando @W accetta carattere K ad indicare checksum calcolato, @0xFF per evitare lampeggio led
+// 18.90 - setup per comandi brevi in scrittura @Y2 in lettura @Y1  in entrambe @Y3
 //         modificato @W, @r, @R  - nuovo cmd write breve senza setup @y.... (l fissa 4, hex)
+// 18.69 - timeout di stream gestito a parametro configurabile 
+// 18.69 - fix problema di pausa troppo lunga a fine stream ed errata successiva lettura - implica SCSINTRPT 4.9
+// 18.68 - nuovo comando @V uguale a @W ma senza controllo di collisione - implica SCSINTRPT 4.8
+// 18.67 - nel comando @W accetta carattere K ad indicare checksum calcolato, @0xFF per evitare lampeggio led
+// 18.66 - correzione problema buffer overflow
 // 18.64 - nuovi comandi lampeggio led breve/lungo (da esp)
 // 18.61 - echo da uart1 a uart2 comando @e - programmazione da uart1-uart2
 // 18.60 - utilizza uart1 e uart2
@@ -207,6 +212,7 @@ BYTE    dataTwin;
 BYTE    writeValue;
 BYTE    writeDest;
 BYTE    check;
+static BYTE         autocheck;			// 18.90
 // ===================================================================================
 extern	char rBufferIdxR;
 extern	BYTE filterByte_A;	//v 4.2  HB: 0000=byte filter off    0001=byte filter include    byte 0010=filter exclude
@@ -234,7 +240,8 @@ extern volatile far BYTE scsMessageTx[SCSBUFLEN];
 //extern volatile far BYTE rByteCount; // solo per test
 extern volatile far BYTE rBufferIdxW;
 extern volatile far BYTE_VAL optionW;
- #define      W_ERROR      bits.b2
+ #define      W_COLLISION  bits.b1	//; 0=intercettare le collisioni      1=non intercettarle
+ #define      W_ERROR      bits.b2	//; 0=scrittura ok					  1=errore collisione o timeout
  #define      W_INTRP      bits.b3
  #define      W_WAIT       bits.b4
  #define      W_EXIT       bits.b5
@@ -776,6 +783,9 @@ void InputMapping(void)
                      case 0xF2:      // lampeggio frequente
 						  ledLamps = 10;
                           break;
+                     case 0xFF:      // nessun lampeggio
+						  ledLamps = 0;
+                          break;
                       case 'E':       // eeprom initialize
 					      eepromInit();
                           putcUSBwait('k');
@@ -816,6 +826,10 @@ void InputMapping(void)
 						      putcUSBwait('E');
 	                          sm_command = SM_WAIT_HEADER;
 						  }
+                          break;
+                     case 'V':      // write stream senza controllo collisioni
+						  optionW.W_COLLISION = 1; // controllo collisioni provvisoriamente tolto
+                          sm_command = SM_WAIT_WRITE_LENGTH;
                           break;
                      case 'W':      // write stream
                           sm_command = SM_WAIT_WRITE_LENGTH;
@@ -900,6 +914,7 @@ void InputMapping(void)
 						  stream_timeout = getUSBvalue();
 						  opt.stream_timeout = stream_timeout;
 						  Write_config();
+						  putcUSBwait('k');
 						  sm_command = SM_WAIT_HEADER;
                           break;
 /*
@@ -1387,6 +1402,7 @@ void InputMapping(void)
 					 check = 0;
 				 }
 				 dataTwin   = 0;
+				 autocheck  = 0;				// 18.90
                  sm_command = SM_WAIT_WRITE_DATA;
                  break;
 
@@ -1437,6 +1453,20 @@ void InputMapping(void)
                      thisHalf = choice0 - 'a' + 10;
                  }
                  else
+                 if (choice0 == 'K')						// 18.90
+                 {											// 18.90
+                     dataByte.data[dataLength++] = autocheck;	// 18.90
+                     dataByte.data[dataLength++] = 0xA3;	// 18.90
+                     if (dataLength >= writeLength)			// 18.90
+                     {										// 18.90
+                         queueWrite(dataLength);			// 18.90
+                         putcUSBwait('k');					// 18.90
+                         sm_command = SM_WAIT_HEADER;		// 18.90
+                     }										// 18.90
+                     dataTwin = 0;							// 18.90
+					 break;									// 18.90
+				 }											// 18.90
+                 else
                  {
                      putcUSBwait('E');
                      sm_command = SM_WAIT_HEADER;
@@ -1447,6 +1477,7 @@ void InputMapping(void)
                      thisByte += thisHalf;
                      dataByte.data[dataLength++] = thisByte;
 					 check ^= thisByte; 
+					 if (dataLength > 0) autocheck ^= thisByte;				// 18.90
                      if (dataLength >= writeLength)
                      {
 						 if (opt.abbrevia.bits.b1)	// abbreviazione, evitare bytes 0, 5, 6 - ricevere solo 4 bytes
@@ -1745,7 +1776,7 @@ void TransferFunction(void)
 #if defined(LED_INT)
         LED_INT = 0;
 #endif
-        if (Ticks++ > ledLamps)
+        if ((ledLamps != 0) && (Ticks++ > ledLamps))	// 18.90
         {
             Ticks = 0;
 #if defined(LED_SYS)
@@ -2360,6 +2391,8 @@ BYTE retry;
     INTCONbits.TMR0IF = 0;   // clear INTERRUPT FLAG
     INTCONbits.GIEH     = 1; // high priority interrupt enabled
     INTCONbits.GIEL     = 1; // low  priority interrupt enabled
+    optionW.W_COLLISION = 0; // controllo collisioni ripristinato
+	optionR.Val = 0;
     DelayMs(1);
 }
 // ===================================================================================
