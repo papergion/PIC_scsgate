@@ -1,12 +1,11 @@
 #define TITLE    "ScsGAte"
 
-#define VERSION  "SCS 19.37C"
+#define VERSION  "SCS 19.37E"
 #define EEPROM_VER	0x8D		// per differenziare scs e knx
-#define UART1_BUFFER    64      // numero bytes buffer uart1 interrupt
+#define UART1_BUFFER  64        // numero bytes buffer uart1 interrupt
 #define UART1_INTERRUPT         // numero bytes buffer uart1 interrupt
-//#define UART1_CALL              // numero bytes buffer uart1 interrupt
+//#define UART1_CALL            // numero bytes buffer uart1 interrupt
 #define IMMEDIATE_ANSWER        // ricava lo stato anche dal comando (non solo dalla risposta di stato)
-//#define DEV_NR		130	        // numero elementi tabella devices portare a 175 (AF)
 #define DEV_NR		175	        // numero elementi tabella devices (0xAF)
 
 #define inUART()   getUART()
@@ -949,6 +948,7 @@ void InputMapping(void)
     BYTE m, n, x, b;
 	int  i;
 	WORD w;
+    WORD_VAL wv;
 
     choice0 = getUSBnowait();
 //  if (choice0 != 0)
@@ -1827,6 +1827,7 @@ void InputMapping(void)
 				 //   '5':  lista ascii
 				 //   '6':  dati singola tapparella hex mode 
 				 //   '7':  ri-pubblica tutte le posizioni
+				 //   '8':  inserisce o modifica tapparella (HEX)
 				 //   '9':  pulisce tutta la tabella
 
 			case SM_WAIT_WRITE_TAPP_SETUP:	// setup tapparelle a %  @u<cmd>   0=no   1=raccogli i dati   2=online   9=ripulisci
@@ -1987,6 +1988,42 @@ void InputMapping(void)
 					 {
                         tapparella[m].direction.bits.b7 = 0;
 						m++;
+					 }
+				 	 break;
+
+				 case '8':	// update tab !!!  - '8' <devx> <type> <maxpH> <maxpL>
+     				 if (opt.opzioneModo == 'X')
+					 {
+						n = getUSBwait();   // device id
+						m = getUSBwait();   // device type
+						wv.byte.HB = getUSBwait();   // max position H (se devtype 9)
+						wv.byte.LB = getUSBwait();   // max position L (se devtype 9)
+
+						if ((n > 0) && (n < DEV_NR) && (m > 0) && (m < 32))
+						{
+						   devc[n] = m;
+                           if (m == 9)
+						   {
+							b = 0;
+							while (b < maxtapp)
+							{
+								if (devicetappa[b].device == n)
+								{
+									devicetappa[b].maxposition = wv.Val;
+									Write_tapparelle();
+									break;
+								}
+								b++;
+							}
+                            if (b == maxtapp)
+							{
+								maxtapp++;
+								devicetappa[b].device = n;
+								devicetappa[b].maxposition = wv.Val;
+								Write_tapparelle();
+							}
+						   } // m == 9
+						}
 					 }
 				 	 break;
 
