@@ -1,9 +1,26 @@
 #define TITLE    "ScsGAte"
-#define VERSION  "SCS 18.92"
+
+#define VERSION  "SCS 19.303"		// V3
 #define EEPROM_VER	0x8D	// per differenziare scs e knx
 
 // #define ECHO
 
+//   A8 <dest> <source> <type> <cmd> XX A3
+//          dest B0-.. pulsanti
+// type=12 (comandi) o 15 (query)
+//          cmd=00 switch/dim ON
+//          cmd=01 switch/dim OFF
+//          cmd=03 dimmer  + MORE (?)
+//          cmd=04 dimmer  - LESS (?)
+//          cmd=08 tapparella ALZA
+//          cmd=09 tapparella ABBASSA
+//          cmd=0A tapparella STOP
+//
+//          cmd=80-FE intensita dimmer raggiunta
+
+// 19.30 - raccoglie tabella info dispositivi - la manda a uart su richiesta @Dn (n bin o hex) indirizzo device - risponde con Dnt (n=indirizzo valido   t=tipo (0xff fine tab)
+//                                                                                se n = FF ripulisce la tabella
+// 18.93 - correzione debug uart2 - comando @0x15 per evitare memo eeprom
 // 18.92 - sistemata la prima inizializzazione della eeprom
 // 18.91 - rivista la gestione dei filtri - loop su 0xFF successivi
 // 18.90 - nel comando @W accetta carattere K ad indicare checksum calcolato, @0xFF per evitare lampeggio led
@@ -117,12 +134,17 @@ static BYTE         uart_in_use = 2;
 //          l'input di uart2    viene inviato solo in output a uart1 ma non a knxgate
 // echo=3 : l'output di knxgate viene inviato ad entrambe le uart indipendentemente dall'input
 //          l'input di uart1    viene inviato anche in output a uart2
-//          l'input di uart2    viene disabilitato
+//          l'input di uart2    viene ignorato
 
 static BYTE         uart_echo = 3;    
 #else
 static BYTE         uart_echo = 0;
 #endif
+// ===================================================================================
+#pragma udata TABDEV
+BYTE devc[180];	// 0xFF:empty    01:switch    03:dimmer    08:tapparella
+BYTE didx;
+BYTE dlen;
 // ===================================================================================
 #pragma udata
 // ===================================================================================
@@ -149,7 +171,9 @@ static BYTE         uart_echo = 0;
         SM_WAIT_WRITE_QUERY,    //  "@t[destin] write test query"
         SM_WAIT_WRITE_LOOP_I,   //  "@Z[value] write loop"
         SM_WAIT_WRITE_LOOP,     //  "@z[value] write loop"
+        SM_WAIT_TABSTART,       //  "@D[start]"
         SM_READ_DEQUEUE,        //  "@r
+        SM_WAIT_RESET,          //  "@|| 
 //      SM_READ_WAIT,           //  "@R
     }   sm_command = SM_WAIT_HEADER;
 // ===================================================================================
@@ -186,6 +210,8 @@ typedef union _SCS_OPTIONS {
 } SCS_OPTIONS;
 // ===================================================================================
 SCS_OPTIONS	opt;
+BYTE ee_avoid_memo = 0;
+BYTE ee_avoid_answer = 0;
 // ===================================================================================
 typedef union _SCS_MESSAGE {
   struct {
@@ -272,6 +298,7 @@ BYTE getUSBvalue(void);
 void putcUSBwait(BYTE  data);
 void putsUSBwait(char *data);
 void putrsUSBwait(const ROM char *data);
+void puthexUSBwait(BYTE  data);
 void WriteByteEEP(BYTE Data, int Addr);
 void Read_eep_array (BYTE *Data, int Address, char Len);
 void Write_eep_array(BYTE *Data, int Address, char Len);
@@ -511,7 +538,13 @@ BYTE VrValue;
     if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,30 Volts // se alimentazione 3.3V
     if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,40 Volts // se alimentazione 3.3V : 1,5 x 13 = 3,5V
 
-    CVRCONbits.CVR = VrValue;   // ref value from 0 to 31
+  #ifdef PULL_3
+    if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,50 Volts // se alimentazione 3.3V
+    if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,60 Volts // se alimentazione 3.3V
+    if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,70 Volts // se alimentazione 3.3V
+  #endif
+
+	CVRCONbits.CVR = VrValue;   // ref value from 0 to 31
 
 //  CM1CONbits.EVPOL = 0b01; // interrupt on rising  edge  (INPUT FALLING)
     PIR4bits.CMP1IF  = 0;    // clear interrupt
@@ -666,20 +699,25 @@ BYTE s, m, n, l;
     m = 10;
     l = scsMessageRx[rBufferIdxR][0];
     if (l > 15) l = 15;
+
 	if (opt.abbrevia.bits.b0)	// abbreviazione, evitare PFX, CHK, SFX
 	{
-		s = 2;
-		l -= 2;
+		s = 2;		// start
+		l -= 3;		// length
 	}
 	else
 		s = 1;
+
     RS_Out_Buffer[6] = btohexa_low(l);
 
-    for (n=s; n<=l; n++)
+	n = 0;
+	while (n<l)
     {
-        RS_Out_Buffer[m++] = btohexa_high(scsMessageRx[rBufferIdxR][n]);
-        RS_Out_Buffer[m++] = btohexa_low (scsMessageRx[rBufferIdxR][n]);
+        RS_Out_Buffer[m++] = btohexa_high(scsMessageRx[rBufferIdxR][s]);
+        RS_Out_Buffer[m++] = btohexa_low (scsMessageRx[rBufferIdxR][s]);
         RS_Out_Buffer[m++] = ' ';
+		n++;
+		s++;
     }
     RS_Out_Buffer[m] = 0;
     putsUSBwait(RS_Out_Buffer);
@@ -693,31 +731,8 @@ BYTE s, m, n, l;
 void AnswerMsg(void)
 {
 BYTE s,n,l;
-    if (opt.opzioneModo == 'X')    // esadecimale puro
-    {
-        if (rBufferIdxR == rBufferIdxW)  // buffer vuoto
-        {
-            putcUSBwait(0x00);
-        }
-        else
-        {
-            l = scsMessageRx[rBufferIdxR][0];
-            if (l > 15) l = 15;
-			if (opt.abbrevia.bits.b0)	// abbreviazione, evitare PFX, CHK, SFX
-			{
-				s = 2;
-				l -= 2;
-			}
-			else
-				s = 1;
-            putcUSBwait(l);
-            for (n=s; n<=l; n++)
-            {
-                putcUSBwait(scsMessageRx[rBufferIdxR][n]);
-            }
-        }
-    }
-    if (opt.opzioneModo == 'A')    // modo ascii
+
+	if (opt.opzioneModo == 'A')    // modo ascii
     {
         if (rBufferIdxR == rBufferIdxW)  // buffer vuoto
         {
@@ -729,17 +744,49 @@ BYTE s,n,l;
             if (l > 15) l = 15;
 			if (opt.abbrevia.bits.b0)	// abbreviazione, evitare PFX, CHK, SFX
 			{
-				s = 2;
-				l -= 2;
+				s = 2;		// start
+				l -= 3;	    // length
 			}
 			else
 				s = 1;
             putcUSBwait(btohexa_low (l));
 
-			for (n=s; n<=l; n++)
+			n = 0;
+			while (n < l)
+//			for (n=s; n<=l; n++)
             {
-                putcUSBwait(btohexa_high(scsMessageRx[rBufferIdxR][n]));
-                putcUSBwait(btohexa_low (scsMessageRx[rBufferIdxR][n]));
+                putcUSBwait(btohexa_high(scsMessageRx[rBufferIdxR][s]));
+                putcUSBwait(btohexa_low (scsMessageRx[rBufferIdxR][s]));
+				n++;
+				s++;
+            }
+        }
+    }
+	else
+    if (opt.opzioneModo == 'X')    // esadecimale puro
+    {
+        if (rBufferIdxR == rBufferIdxW)  // buffer vuoto
+        {
+            putcUSBwait(0x00);
+        }
+        else
+        {
+            l = scsMessageRx[rBufferIdxR][0];	// 7
+            if (l > 15) l = 15;
+			if (opt.abbrevia.bits.b0)	// abbreviazione, evitare PFX, CHK, SFX
+			{
+				s = 2;			// start ptr
+				l -= 3;	        // length
+			}
+			else
+				s = 1;
+            putcUSBwait(l);  // length: 7 or 4
+
+			n = 0;
+			while (n < l)
+            {
+                putcUSBwait(scsMessageRx[rBufferIdxR][s++]);
+				n++;
             }
         }
     }
@@ -771,33 +818,56 @@ void InputMapping(void)
             case SM_WAIT_COMMAND:
                  switch(choice0)
                  {
+                     case '@':
+                          break;
                      case 0x11:      // firmware update
                           REPROmainB(0x10, 0x12);
                           break;
                      case 0x12:      // dummy firmware update
                           putcUSBwait('k');
                           break;
+                     case 0x15:      // per evitare memo in eeprom
+						  ee_avoid_memo = 1;
+						  ee_avoid_answer = 1;
+						  sm_command = SM_WAIT_HEADER;
+						  if (ee_avoid_answer == 0)
+								putcUSBwait('k');
+                          break;
+                     case 0x16:      // ripristina memo in eeprom
+						  ee_avoid_memo = 0;
+						  ee_avoid_answer = 0;
+						  sm_command = SM_WAIT_HEADER;
+                          putcUSBwait('k');
+                          break;
                      case 0xF0:      // lampeggio lunghissimo
 						  ledLamps = 200;
+						  sm_command = SM_WAIT_HEADER;
                           break;
                      case 0xF1:      // lampeggio standard
 						  ledLamps = 30;
+						  sm_command = SM_WAIT_HEADER;
                           break;
                      case 0xF2:      // lampeggio frequente
 						  ledLamps = 10;
+						  sm_command = SM_WAIT_HEADER;
                           break;
                      case 0xFF:      // nessun lampeggio
 						  ledLamps = 0;
+						  sm_command = SM_WAIT_HEADER;
                           break;
                       case 'E':       // eeprom initialize
 					      eepromInit();
-                          putcUSBwait('k');
+						  if (ee_avoid_answer == 0)
+								putcUSBwait('k');
+						  sm_command = SM_WAIT_HEADER;
                           break;
 #if (defined(USE_UART1) && defined(USE_UART2))
                      case 'e':       // echo uart
 						  uart_echo++;
 						  if (uart_echo > 3) uart_echo = 0;
-                          putcUSBwait('k');
+						  if (ee_avoid_answer == 0)
+								putcUSBwait('k');
+						  sm_command = SM_WAIT_HEADER;
                           break;
 #endif
                      case 'M':       // mode ascii-hex
@@ -816,19 +886,19 @@ void InputMapping(void)
                           sm_command = SM_WAIT_ABBREV_TYPE;
                           break;
                      case 'y':      // abbreviated write 4 bytes
-						  if (opt.opzioneModo == 'X')
-						  {
+//						  if (opt.opzioneModo == 'X')
+//						  {
 							  writeLength = 4;
 							  dataLength = 0;
  							  dataByte.data[dataLength++] = 0xA8;
 							  check = 0;
 							  sm_command = SM_WAIT_WRITE_DATA_BREVE;
-						  }
-						  else
-						  {
-						      putcUSBwait('E');
-	                          sm_command = SM_WAIT_HEADER;
-						  }
+//						  }
+//						  else
+//						  {
+//						      putcUSBwait('E');
+//	                          sm_command = SM_WAIT_HEADER;
+//						  }
                           break;
                      case 'V':      // write stream senza controllo collisioni
 						  optionW.W_COLLISION = 1; // controllo collisioni provvisoriamente tolto
@@ -867,7 +937,8 @@ void InputMapping(void)
                           rBufferIdxW = 0;
                           rBufferIdxR = 0;
                           sm_command = SM_WAIT_HEADER;
-                          putcUSBwait('k');
+						  if (ee_avoid_answer == 0)
+								putcUSBwait('k');
                           break;
                      case 'q':       // query version
                           sm_command = SM_WAIT_HEADER;
@@ -881,6 +952,10 @@ void InputMapping(void)
                           {
                               putrsUSBwait(VERSION);
                           }
+                          break;
+
+                     case 'D':       // richiede tabella dispositivi
+                          sm_command = SM_WAIT_TABSTART;
                           break;
 
                      case 'T':       // test mode  @TS
@@ -917,7 +992,8 @@ void InputMapping(void)
 						  stream_timeout = getUSBvalue();
 						  opt.stream_timeout = stream_timeout;
 						  Write_config();
-						  putcUSBwait('k');
+						  if (ee_avoid_answer == 0)
+								putcUSBwait('k');
 						  sm_command = SM_WAIT_HEADER;
                           break;
 /*
@@ -1021,7 +1097,8 @@ void InputMapping(void)
                      case 'l':       // log x test
 //                        if  (opt.opzioneModo == 'A')
                           {
-                              putcUSBwait('k');
+							  if (ee_avoid_answer == 0)
+									putcUSBwait('k');
                               sm_stato = SM_LOG_WAIT;
                           }
 //                        else
@@ -1032,7 +1109,8 @@ void InputMapping(void)
 //                        if  (opt.opzioneModo == 'A')
                           {
                               sm_stato = SM_HOME;
-                              putcUSBwait('k');
+							  if (ee_avoid_answer == 0)
+									putcUSBwait('k');
                           }
 //                        else
 //                            putcUSBwait('E');
@@ -1125,7 +1203,12 @@ void InputMapping(void)
                           sm_command = SM_WAIT_HEADER;
                           break;
 
-// ----------------------- fine opzioni di test --------------------------------------
+
+                     case '|':       // reset request - first req char
+                          sm_command = SM_WAIT_RESET;
+                          break;
+
+ // ----------------------- fine opzioni di test --------------------------------------
 
 
 					 default:
@@ -1133,6 +1216,12 @@ void InputMapping(void)
                           sm_command = SM_WAIT_HEADER;
                           break;
                  }
+                 break;
+
+            case SM_WAIT_RESET:  
+                 if (choice0 == '|') Reset();
+                 putcUSBwait('E');
+                 sm_command = SM_WAIT_HEADER;
                  break;
 
             case SM_WAIT_MODO:    //    "@M[A|X] : modo ascii | hex"
@@ -1143,7 +1232,8 @@ void InputMapping(void)
 						 opt.opzioneModo = choice0;
 						 Write_config();
 					 }
-                     putcUSBwait('k');
+					  if (ee_avoid_answer == 0)
+							putcUSBwait('k');
                  }
                  else
                      putcUSBwait('E');
@@ -1167,7 +1257,8 @@ void InputMapping(void)
 							//v 4.2  HB  0100=exclude ack        1000=exclude equal tlgrm
 					        //v 4.2  LB: byte nr su cui filtrare (1-F) - comparato con rByteCount (0=filteroff)
 					 }
-                     putcUSBwait('k');
+					  if (ee_avoid_answer == 0)
+							putcUSBwait('k');
                  }
                  else
                      putcUSBwait('E');
@@ -1182,7 +1273,8 @@ void InputMapping(void)
 						 opt.abbrevia.Val = choice0;
 						 Write_config();
 					 }
-                     putcUSBwait('k');
+					  if (ee_avoid_answer == 0)
+							putcUSBwait('k');
                  }
                  else
                      putcUSBwait('E');
@@ -1210,7 +1302,8 @@ void InputMapping(void)
 						 filterByte_A = 0;
 						 Write_config();
 					 }
-					 putcUSBwait('k');
+					  if (ee_avoid_answer == 0)
+							putcUSBwait('k');
 					 sm_command = SM_WAIT_HEADER;
 					 break;
 				 }
@@ -1270,7 +1363,8 @@ void InputMapping(void)
 					 Write_config();
 					 filterByte_A = opt.EfilterByte_A;
 					 filterValue_A = opt.EfilterValue_A;
-                     putcUSBwait('k');
+					  if (ee_avoid_answer == 0)
+							putcUSBwait('k');
                      sm_command = SM_WAIT_HEADER;
                      dataTwin = 0;
                  }
@@ -1303,7 +1397,8 @@ void InputMapping(void)
 						 filterByte_B = 0;
 						 Write_config();
 					 }
-                     putcUSBwait('k');
+					  if (ee_avoid_answer == 0)
+							putcUSBwait('k');
 					 sm_command = SM_WAIT_HEADER;
 					 break;
 				 }
@@ -1357,7 +1452,8 @@ void InputMapping(void)
 					 Write_config();
 					 filterByte_B = opt.EfilterByte_B;
 					 filterValue_B = opt.EfilterValue_B;
-                     putcUSBwait('k');
+					  if (ee_avoid_answer == 0)
+							putcUSBwait('k');
                      sm_command = SM_WAIT_HEADER;
                      dataTwin = 0;
                  }
@@ -1410,16 +1506,65 @@ void InputMapping(void)
                  break;
 
             case SM_WAIT_WRITE_DATA_BREVE:  //    "@y[data] : write"
-                 dataByte.data[dataLength++] = choice0;
-				 check ^= choice0; 
-                 if (dataLength > writeLength)
-                 {
-					 dataByte.data[dataLength++] = check;
-					 dataByte.data[dataLength++] = 0xA3;
-					 queueWrite(dataLength);
-                     putcUSBwait('k');
-                     sm_command = SM_WAIT_HEADER;
-                 }
+				  if (opt.opzioneModo == 'X')
+				  {
+					 dataByte.data[dataLength++] = choice0;
+					 check ^= choice0; 
+					 if (dataLength > writeLength)
+					 {
+						 dataByte.data[dataLength++] = check;
+						 dataByte.data[dataLength++] = 0xA3;
+						 queueWrite(dataLength);
+						  if (ee_avoid_answer == 0)
+								putcUSBwait('k');
+						 sm_command = SM_WAIT_HEADER;
+					 }
+				  }
+				  else
+				  {
+					 if ((choice0 >= '0') && (choice0 <= '9'))
+					 {
+						 thisHalf = choice0 - '0';
+					 }
+					 else
+					 if ((choice0 >= 'A') && (choice0 <= 'F'))
+					 {
+						 thisHalf = choice0 - 'A' + 10;
+					 }
+					 else
+					 if ((choice0 >= 'a') && (choice0 <= 'f'))
+					 {
+						 thisHalf = choice0 - 'a' + 10;
+					 }
+					 else
+					 {
+						 putcUSBwait('E');
+						 sm_command = SM_WAIT_HEADER;
+						 break;
+					 }
+					 if (dataTwin)
+					 {
+						 thisByte += thisHalf;
+						 dataByte.data[dataLength++] = thisByte;
+						 check ^= thisByte; 
+						 if (dataLength > writeLength)
+						 {
+							 dataByte.data[dataLength++] = check;
+							 dataByte.data[dataLength++] = 0xA3;
+							 queueWrite(dataLength);
+							  if (ee_avoid_answer == 0)
+									putcUSBwait('k');
+							 sm_command = SM_WAIT_HEADER;
+						 }
+						 dataTwin = 0;
+					 }
+					 else
+					 {
+						 thisByte = thisHalf;
+						 thisByte<<=4;
+						 dataTwin = 1;
+					 }
+				  }
                  break;
 
             case SM_WAIT_WRITE_DATA:  //    "@W[1-F][data] : write"
@@ -1435,7 +1580,8 @@ void InputMapping(void)
 							 dataByte.data[dataLength++] = 0xA3;
 						 }
 						 queueWrite(dataLength);
-                         putcUSBwait('k');
+						  if (ee_avoid_answer == 0)
+								putcUSBwait('k');
                          sm_command = SM_WAIT_HEADER;
                      }
                      break;
@@ -1463,7 +1609,8 @@ void InputMapping(void)
                      if (dataLength >= writeLength)			// 18.90
                      {										// 18.90
                          queueWrite(dataLength);			// 18.90
-                         putcUSBwait('k');					// 18.90
+						  if (ee_avoid_answer == 0)
+								putcUSBwait('k');
                          sm_command = SM_WAIT_HEADER;		// 18.90
                      }										// 18.90
                      dataTwin = 0;							// 18.90
@@ -1489,7 +1636,8 @@ void InputMapping(void)
 							 dataByte.data[dataLength++] = 0xA3;
 						 }
                          queueWrite(dataLength);
-                         putcUSBwait('k');
+						  if (ee_avoid_answer == 0)
+								putcUSBwait('k');
                          sm_command = SM_WAIT_HEADER;
                      }
                      dataTwin = 0;
@@ -1591,8 +1739,93 @@ void InputMapping(void)
                  dataByte.CheckByte = dataByte.data[1]^dataByte.data[2]^dataByte.data[3]^dataByte.data[4];
                  dataByte.BottomByte = 0xA3;
                  queueWrite(7);
-                 putcUSBwait('k');
+				  if (ee_avoid_answer == 0)
+						putcUSBwait('k');
                  sm_command = SM_WAIT_HEADER;
+                 dataTwin = 0;
+                 break;
+
+
+            case SM_WAIT_TABSTART:  //  "@D[start]"
+//BYTE devc[180];	// 0xFF:empty    01:switch    03:dimmer    08:tapparella
+//BYTE didx;
+                 if (opt.opzioneModo == 'X')
+                 {
+                     didx  = choice0;
+                 }
+                 else
+                 {
+                     if ((choice0 >= '0') && (choice0 <= '9'))
+                     {
+                         thisHalf = choice0 - '0';
+                     }
+                     else
+                     if ((choice0 >= 'A') && (choice0 <= 'F'))
+                     {
+                         thisHalf   = choice0 - 'A' + 10;
+                     }
+                     else
+                     if ((choice0 >= 'a') && (choice0 <= 'f'))
+                     {
+                         thisHalf   = choice0 - 'a' + 10;
+                     }
+                     else
+                     {
+                         putcUSBwait('E');
+                         sm_command = SM_WAIT_HEADER;
+                         break;
+                     }
+                     if (dataTwin)
+                     {
+                         thisByte += thisHalf;
+                         didx = thisByte;
+                     }
+                     else
+                     {
+                         thisByte = thisHalf;
+                         thisByte<<=4;
+                         dataTwin = 1;
+                         break;
+                     }
+                 }
+
+				 if (didx == 0xFF)
+				 {
+					didx = 0;
+					while (didx < sizeof(devc))
+					{
+						devc[didx++] = 0xFF;
+					}
+					didx = 0;
+				 }
+				 else
+				 {
+					 while ((devc[didx] == 0xFF) && (didx < 180)) // sizeof(devc))
+					 {
+						 didx++;
+					 }
+				 }
+                 putcUSBwait('D');
+                 if (opt.opzioneModo == 'X')
+	                 putcUSBwait(didx);
+				 else
+	                 puthexUSBwait(didx);
+				 if (didx < sizeof(devc))
+				 {
+                     if (opt.opzioneModo == 'X')
+	                     putcUSBwait(devc[didx]);
+					 else
+	                     puthexUSBwait(devc[didx]);
+				 }
+				 else
+				 {
+                     if (opt.opzioneModo == 'X')
+	                     putcUSBwait(0xFF);
+					 else
+	                     puthexUSBwait(0xFF);
+				 }
+
+				 sm_command = SM_WAIT_HEADER;
                  dataTwin = 0;
                  break;
 
@@ -1654,7 +1887,8 @@ void InputMapping(void)
                  dataByte.CheckByte = dataByte.data[1]^dataByte.data[2]^dataByte.data[3]^dataByte.data[4];
                  dataByte.BottomByte = 0xA3;
                  queueWrite(7);
-                 putcUSBwait('k');
+				  if (ee_avoid_answer == 0)
+						putcUSBwait('k');
                  sm_command = SM_WAIT_HEADER;
                  dataTwin = 0;
                  break;
@@ -1909,6 +2143,61 @@ BYTE increment;
 				increment = 1;
 			}
 
+//   A8 <dest> <source> <type> <cmd> XX A3
+//          dest B0-.. pulsanti
+// type=12 (comandi) o 15 (query)
+//          cmd=00 switch/dim ON
+//          cmd=01 switch/dim OFF
+//          cmd=03 dimmer  + MORE (?)
+//          cmd=04 dimmer  - LESS (?)
+//          cmd=08 tapparella ALZA
+//          cmd=09 tapparella ABBASSA
+//          cmd=0A tapparella STOP
+//
+//          cmd= 80-FE intensita dimmer raggiunta
+
+//BYTE devc[180];	// 0xFF:empty    01:switch    03:dimmer    08:tapparella
+//BYTE didx;
+
+//			if (sm_stato   ==  SM_READ_WAIT)
+			{
+				if ((scsMessageRx[rBufferIdxR][0] == 7) &&
+					(scsMessageRx[rBufferIdxR][1] == 0xA8) &&
+					(scsMessageRx[rBufferIdxR][4] == 0x12) &&
+					(scsMessageRx[rBufferIdxR][7] == 0xA3) )
+				{
+					if (scsMessageRx[rBufferIdxR][2] < 0xB0)
+						didx = scsMessageRx[rBufferIdxR][2];
+					else
+						didx = scsMessageRx[rBufferIdxR][3];
+
+					if ((didx > 0) && (didx < 180)) // (sizeof(devc)))
+					{
+						switch (scsMessageRx[rBufferIdxR][5])
+						{
+						case 0:
+						case 0x01:
+							if (devc[didx] == 0xFF)
+								devc[didx] = 1;
+							break;
+						case 0x03:
+						case 0x04:
+							devc[didx] = 3;
+							break;
+						case 0x08:
+						case 0x09:
+						case 0x0A:
+							devc[didx] = 8;
+							break;
+						default:
+							if ((scsMessageRx[rBufferIdxR][5] & 0x0F) == 0x0D)
+								devc[didx] = 3;
+							break;
+						}
+					}
+				}
+			}
+
 			if (sm_stato   ==  SM_READ_WAIT)
 			{
 				AnswerMsg();
@@ -1960,18 +2249,21 @@ char getUSBwait(void)
 {
 BYTE c;
 #if defined(USE_UART2)
-	if (uart_in_use == 2)
-    {
-        if (RCSTA2bits.OERR) {
-            RCSTA2bits.CREN = 0;
-            RCSTA2bits.CREN = 1;
-        }
-        while (PIR3bits.RC2IF == 0)  ClrWdt();
-        c = RCREG2;
-        PIR3bits.RC2IF = 0;
-        uartRc = 1;
-        return c;
-    }
+    if (uart_echo != 3)
+	{
+		if (uart_in_use == 2)
+		{
+			if (RCSTA2bits.OERR) {
+				RCSTA2bits.CREN = 0;
+				RCSTA2bits.CREN = 1;
+			}
+			while (PIR3bits.RC2IF == 0)  ClrWdt();
+			c = RCREG2;
+			PIR3bits.RC2IF = 0;
+			uartRc = 1;
+			return c;
+		}
+	}
 #endif
 
 #if defined(USE_UART1)
@@ -2013,35 +2305,40 @@ char getUSBnowait(void)
 BYTE c;
     c = 0;
 #if defined(USE_UART2)
-    if (RCSTA2bits.OERR) {
-        RCSTA2bits.CREN = 0;
-        if (uart_echo != 3) RCSTA2bits.CREN = 1;
-    }
-    if (PIR3bits.RC2IF != 0)
-    {
-		c = RCREG2;
-		PIR3bits.RC2IF = 0;
-// echo=0 : l'output di knxgate viene inviato all'uart che ha fornito l'ultimo input in ordine di tempo
-// echo=1 : l'output di knxgate viene inviato ad entrambe le uart indipendentemente dall'input
-// echo=2 : l'output di knxgate viene inviato ad entrambe le uart indipendentemente dall'input
-//          l'input di uart2  (USB)  viene inviato solo in output a uart1 (ESP) ma non a knxgate
-// echo=3 : uart1 (ESP) master,  uart2 echo di tutto il traffico in input e output
-
-#if defined(USE_UART1)
-		if (uart_echo == 2)
-		{						// ricevuto da USB -> inviato a ESP
-            while (TXSTA1bits.TRMT == 0); // wait if the buffer is full 
-            TXREG1 = c; // transfer data word to TX reg 
-			c = 0;
+    if (uart_echo != 3)
+	{
+		if (RCSTA2bits.OERR) {
+			RCSTA2bits.CREN = 0;
+			RCSTA2bits.CREN = 1;
 		}
-		else
-#endif
+		if (PIR3bits.RC2IF != 0)
 		{
-			uartRc = 1;
-			uart_in_use = 2;
-			return c;
+			c = RCREG2;
+			PIR3bits.RC2IF = 0;
+	// echo=0 : l'output di knxgate viene inviato all'uart che ha fornito l'ultimo input in ordine di tempo
+	// echo=1 : l'output di knxgate viene inviato ad entrambe le uart indipendentemente dall'input
+	// echo=2 : l'output di knxgate viene inviato ad entrambe le uart indipendentemente dall'input
+	//          l'input di uart2  (USB)  viene inviato solo in output a uart1 (ESP) ma non a knxgate
+	// echo=3 : uart1 (ESP) master,  uart2 echo di tutto il traffico in input e output
+		
+
+
+	#if defined(USE_UART1)
+			if (uart_echo == 2)
+			{						// ricevuto da USB -> inviato a ESP
+				while (TXSTA1bits.TRMT == 0); // wait if the buffer is full 
+				TXREG1 = c; // transfer data word to TX reg 
+				c = 0;
+			}
+			else
+	#endif
+			{
+				uartRc = 1;
+				uart_in_use = 2;
+				return c;
+			}
 		}
-    }
+	}
 #endif
 
 #if defined(USE_UART1)
@@ -2062,9 +2359,7 @@ BYTE c;
             while (TXSTA2bits.TRMT == 0); // wait if the buffer is full 
             TXREG2 = c; // transfer data word to TX reg 
 		}
-		else
 #endif
-
 		return c;
     }
 #endif
@@ -2100,6 +2395,12 @@ void putcUSBwait (BYTE data)
         }
     }
 #endif
+}
+// ==========================write USB via USART=====================================
+void puthexUSBwait (BYTE data)
+{
+	putcUSBwait(btohexa_high(data));
+	putcUSBwait(btohexa_low(data));
 }
 // ==========================write USB via USART=====================================
 void putsUSBwait(char *data)
@@ -2208,6 +2509,7 @@ void main(void)
     {
 		eepromInit();
     }
+
 	if (opt.abbrevia.Val == 0xFF)	opt.abbrevia.Val = '0';
 	filterByte_A = opt.EfilterByte_A;
 	filterValue_A = opt.EfilterValue_A;
@@ -2228,6 +2530,12 @@ void main(void)
 	opt.stream_timeout	= stream_timeout;
 
     AppInitialize();
+
+	didx = 0;
+	while (didx < sizeof(devc))
+	{
+		devc[didx++] = 0xFF;
+	}
 
     while(1)
     {
@@ -2378,7 +2686,8 @@ void Write_eep_array(BYTE *Data, int Address, char Len)
 // ===================================================================================
 void Write_config(void)
 {
-	Write_eep_array(&opt, EE_CONFIG, (char) sizeof(opt));
+	if (ee_avoid_memo == 0)
+		Write_eep_array(&opt, EE_CONFIG, (char) sizeof(opt));
 }
 // ===================================================================================
 BYTE btohexa_high(BYTE b)

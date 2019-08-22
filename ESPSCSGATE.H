@@ -4,6 +4,8 @@
 #ifndef _ESPSCSGATE_H
 #define _ESPSCSGATE_H
 #define HW 160318
+#define PULL_3
+
 /* 
 standard
  27V : 13 x 1,5 = 3,12 H
