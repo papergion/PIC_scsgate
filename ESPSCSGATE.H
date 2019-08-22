@@ -36,15 +36,15 @@ ricalcolati per alimentatore knx
 ;                 xtal   --------|10 ra6        Vss 19|-------- -
 ;           join uart RX --------|11 rc0        rc7 18|---<----   uart1 RX   from esp8266 tx
 ;           join uart TX --------|12 rc1        rc6 17|--->----   uart1 TX     to esp8266 rx
-;                        --------|13 rc2        rc5 16|--------   nc
+;                        --------|13 rc2        rc5 16|--------   join
 ;                        --------|14 rc3        rc4 15|--->----   OUT
 ;                                +--------------------+
 ; -------------------------------------------------------------------------*/
 
 #if (HW == 160318)
-  #define INIT_TRISA  (0b10000000) //
-  #define INIT_TRISB  (0b10000010) //
-  #define INIT_TRISC  (0b10000011) //
+  #define INIT_TRISA  (0b10001000) //
+  #define INIT_TRISB  (0b10000010) // 
+  #define INIT_TRISC  (0b10100011) //
   #define LED_SYS      LATAbits.LATA1
   #define BAUD_RATE         7      // 115200 baud
   #define INIT_PORTC  (0b01000000) //

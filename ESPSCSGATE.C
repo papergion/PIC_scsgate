@@ -277,7 +277,7 @@ void Write_config(void);
 
 static void InitializeBoard(void);
 void TickInit(void);
-void setAnalogModeNo232(void);
+void AppInitialize(void);
 void IncrementBufferPtr(void);
 void LogScsDisplay(void);
 void AnswerMsg(void);
@@ -569,7 +569,7 @@ void eepromInit(void)
 		opt.eeVersion = EEPROM_VER;
 		opt.Vref = 20;
 		opt.abbrevia.Val = '0';
-		opt.stream_timeout = 0;
+		opt.stream_timeout = 191;
 		Write_config();
 		DelayMs(10);
 
@@ -619,7 +619,7 @@ _endasm
 
 
 // -----------------------------------------------------------------------------------
-void setAnalogModeNo232(void)
+void AppInitialize(void)
 {
     SCSTX3 = 0;    // idle=low
 //  T2CON = 0b01111010;      // postscale 16   prescaler 16   - timeout 4,09mS
@@ -1812,17 +1812,17 @@ BYTE valido;
 	if  ((scsMessageRx[rBufferIdxR][0] == 2) && (scsMessageRx[rBufferIdxR][1] == 0xFF)&& (scsMessageRx[rBufferIdxR][2] == 0xFF))
 		  valido = 0;
 
-	if (opzioneFiltro & 0x04)                                  // esclude messaggi di stato
+	if (opt.opzioneFiltro & 0x04)                                  // esclude messaggi di stato
 	{
 		if  ((scsMessageRx[rBufferIdxR][0] > 2) && (scsMessageRx[rBufferIdxR][3] != 0))
 		  valido = 0;
 	}
-	if (opzioneFiltro & 0x02)       // esclude messaggi ack
+	if (opt.opzioneFiltro & 0x02)       // esclude messaggi ack
 	{
 		if  ((scsMessageRx[rBufferIdxR][0] == 1) && (scsMessageRx[rBufferIdxR][1] == 0xA5))
 		  valido = 0;
 	}
-	if ((opzioneFiltro & 0x01)       // esclude messaggi doppi
+	if ((opt.opzioneFiltro & 0x01)       // esclude messaggi doppi
 	&&  (rBufferIdxR != rBufferIdxP)
 	&&  (rBufferIdxP != 0xFF))
 	{
@@ -1867,7 +1867,7 @@ BYTE increment;
 				sm_command = SM_WAIT_HEADER;
 			}
 
-			if ((sm_stato   ==  SM_TEST_MODE)
+			if (sm_stato   ==  SM_TEST_MODE)
 			{
 				if ((scsMessageRx[rBufferIdxR][0] == 8) &&
 					(scsMessageRx[rBufferIdxR][1] == dataByte.data[0]) &&
@@ -1951,113 +1951,6 @@ BYTE increment;
 		}
 	}
 }
-
-
-
-// * * * * * * * * * * VECCHI * * * * * * * 
-/*
-// ==========================get  USB via USART2======================================
-char getUSBwait(void)
-{
-#if defined(USE_UART2)
-    {
-        if (RCSTA2bits.OERR) {
-            RCSTA2bits.CREN = 0;
-            RCSTA2bits.CREN = 1;
-        }
-        while (PIR3bits.RC2IF == 0)  ClrWdt();
-        PIR3bits.RC2IF = 0;
-        uartRc = 1;
-        return RCREG2;
-    }
-#endif
-    uartRc = 0;
-    return 0;
-}
-// ===================================================================================
-BYTE getUSBvalue(void)
-{
-BYTE in, res;
-     res = 0;
-     in = getUSBwait();
-     while ((in >= '0') && (in <= '9'))
-     {
-         in -= '0';
-         res *= 10;
-         res += in;
-         in = getUSBwait();
-     }
-     return res;
-}
-// ==========================read USB via USART2======================================
-char getUSBnowait(void)
-{
-BYTE c;
-    c = 0;
-#if defined(USE_UART2)
-//  else
-    {
-        if (RCSTA2bits.OERR) {
-            RCSTA2bits.CREN = 0;
-            RCSTA2bits.CREN = 1;
-        }
-        if (PIR3bits.RC2IF == 0)
-        {
-            uartRc = 0;
-            return c;
-        }
-        PIR3bits.RC2IF = 0;
-        uartRc = 1;
-        return RCREG2;
-    }
-#endif
-}
-// ==========================write USB via USART2=====================================
-void putcUSBwait (BYTE data)
-{
-#if defined(USE_UART2)
-    {
-        {
-            while (TXSTA2bits.TRMT == 0); // wait if the buffer is full 
-            TXREG2 = data; // transfer data word to TX reg 
-        }
-    }
-#endif
-}
-// ==========================write USB via USART2=====================================
-void putsUSBwait(char *data)
-{
-#if defined(USE_UART2)
-    {
-        // transmit till NULL character is encountered 
-        while(*data != '\0')
-        {
-            while (TXSTA2bits.TRMT == 0); 
-            TXREG2 = *data++;
-        }
-    }
-#endif
-}
-
-
-// ==========================write USB via USART2=====================================
-void putrsUSBwait(const ROM char *data)
-{
-#if defined(USE_UART2)
-    {
-        while(*data != '\0')
-        {
-            while (TXSTA2bits.TRMT == 0);  
-            TXREG2 = *data++; 
-        }
-    }
-#endif
-}
-*/
-// ===================================================================================
-
-
-// * * * * * * * * * * NUOVI * * * * * * * 
 
 // ==========================get  USB via USART======================================
 
@@ -2331,7 +2224,7 @@ void main(void)
 	scsInit();
 	opt.stream_timeout	= stream_timeout;
 
-    setAnalogModeNo232();
+    AppInitialize();
 
     while(1)
     {
