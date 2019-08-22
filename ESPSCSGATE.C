@@ -1,8 +1,9 @@
 #define TITLE    "ScsGAte"
-#define VERSION  "SCS 18.90"
+#define VERSION  "SCS 18.91"
 #define EEPROM_VER	0x8D	// per differenziare scs e knx
 
 // #define ECHO
+// 18.91 - rivista la gestione dei filtri - loop su 0xFF successivi
 // 18.90 - nel comando @W accetta carattere K ad indicare checksum calcolato, @0xFF per evitare lampeggio led
 // 18.90 - setup per comandi brevi in scrittura @Y2 in lettura @Y1  in entrambe @Y3
 //         modificato @W, @r, @R  - nuovo cmd write breve senza setup @y.... (l fissa 4, hex)
@@ -1798,6 +1799,46 @@ void TransferFunction(void)
     }
 }
 // ===================================================================================
+BYTE MsgValido(void)
+{
+BYTE f,l,m;
+BYTE valido;
+
+	valido = 1;
+
+	if  ((scsMessageRx[rBufferIdxR][0] == 1) && (scsMessageRx[rBufferIdxR][1] == 0xFF))
+		  valido = 0;
+	else
+	if  ((scsMessageRx[rBufferIdxR][0] == 2) && (scsMessageRx[rBufferIdxR][1] == 0xFF)&& (scsMessageRx[rBufferIdxR][2] == 0xFF))
+		  valido = 0;
+
+	if (opzioneFiltro & 0x04)                                  // esclude messaggi di stato
+	{
+		if  ((scsMessageRx[rBufferIdxR][0] > 2) && (scsMessageRx[rBufferIdxR][3] != 0))
+		  valido = 0;
+	}
+	if (opzioneFiltro & 0x02)       // esclude messaggi ack
+	{
+		if  ((scsMessageRx[rBufferIdxR][0] == 1) && (scsMessageRx[rBufferIdxR][1] == 0xA5))
+		  valido = 0;
+	}
+	if ((opzioneFiltro & 0x01)       // esclude messaggi doppi
+	&&  (rBufferIdxR != rBufferIdxP)
+	&&  (rBufferIdxP != 0xFF))
+	{
+		f = 1;
+		l = scsMessageRx[rBufferIdxR][0];
+		for (m=0; m<=l;m++)
+		{
+			if (scsMessageRx[rBufferIdxR][m] != scsMessageRx[rBufferIdxP][m])   f = 0;
+		}
+		if (f)     valido = 0;
+	}
+	return valido;
+}
+// ===================================================================================
+
+
 
 
 
@@ -1809,138 +1850,109 @@ void TransferFunction(void)
 void OutputMapping(void)
 {
 BYTE f,l,m;
+BYTE increment;
+
+	increment = 0;
 
     if  (rBufferIdxR != rBufferIdxW)
-    {
-            if  ((scsMessageRx[rBufferIdxR][0] == 1) && (scsMessageRx[rBufferIdxR][1] == 0xFF))
-                  IncrementBufferPtr();
-            if  ((scsMessageRx[rBufferIdxR][0] == 2) && (scsMessageRx[rBufferIdxR][1] == 0xFF)&& (scsMessageRx[rBufferIdxR][2] == 0xFF))
-                  IncrementBufferPtr();
-    }
-#if defined (ECHO)
-    if  (rBufferIdxR != rBufferIdxW)
-    {
-        if  ((scsMessageRx[rBufferIdxR][0] == 8) && (scsMessageRx[rBufferIdxR][1] == 0x9A))
+	{
+		if (MsgValido())
 		{
-	        if  ((scsMessageRx[rBufferIdxR][2] == 0xBC) && (scsMessageRx[rBufferIdxR][3] == 0xDE)
-	        &&   (scsMessageRx[rBufferIdxR][4] == 0xF0) && (scsMessageRx[rBufferIdxR][5] == 0x12))
-				 		sm_stato = SM_ECHO_ON;
+			rBufferIdxP = rBufferIdxR;
+
+			if (sm_command ==  SM_READ_DEQUEUE)
+			{
+				AnswerMsg();
+				increment = 1;
+				sm_command = SM_WAIT_HEADER;
+			}
+
+			if ((sm_stato   ==  SM_TEST_MODE)
+			{
+				if ((scsMessageRx[rBufferIdxR][0] == 8) &&
+					(scsMessageRx[rBufferIdxR][1] == dataByte.data[0]) &&
+					(scsMessageRx[rBufferIdxR][2] == dataByte.data[1]) &&
+					(scsMessageRx[rBufferIdxR][3] == dataByte.data[2]) &&
+					(scsMessageRx[rBufferIdxR][4] == dataByte.data[3]) &&
+					(scsMessageRx[rBufferIdxR][5] == dataByte.data[4]) &&
+					(scsMessageRx[rBufferIdxR][6] == dataByte.data[5]) &&
+					(scsMessageRx[rBufferIdxR][7] == dataByte.data[6]) &&
+					(scsMessageRx[rBufferIdxR][8] == dataByte.data[7]) )
+					putcUSBwait('k');
+				else
+				{
+					putcUSBwait('N');
+					if (opt.opzioneModo == 'A')
+						LogScsDisplay();
+					testCounter = 0;
+					putrsUSBwait("\r\nTest FAILED!!!");
+					sm_stato = SM_HOME;
+				}
+				dataByte.data[0]++;
+				dataByte.data[1]--;
+				dataByte.data[2]++;
+				dataByte.data[3]--;
+				dataByte.data[4]++;
+				dataByte.data[5]--;
+				dataByte.data[6]++;
+				queueWrite(8);
+
+				putcUSBwait('.');
+				testCounter--;
+				if (testCounter == 0) 
+				{
+					sm_stato = SM_HOME;
+					putrsUSBwait("\r\nTest O.K.!");
+				}
+				increment = 1;
+			}
+
+			if (sm_stato   ==  SM_READ_WAIT)
+			{
+				AnswerMsg();
+				increment = 1;
+				sm_stato = SM_HOME;
+			}
+
+			if (sm_stato   ==  SM_LOG_WAIT)
+			{
+				if (opt.opzioneModo == 'A')
+					LogScsDisplay();
+				else
+					AnswerMsg();
+
+				increment = 1;
+			}
+
+			if (sm_stato   ==  SM_ECHO_ON)
+			{
+				l = scsMessageRx[rBufferIdxR][0];
+				f = 1;
+				m = 0;
+				while (m < l)
+				{
+        			dataByte.data[m++] = scsMessageRx[rBufferIdxR][f++];
+				}
+				queueWrite(l);
+				increment = 1;
+			}
+			if (increment)
+				IncrementBufferPtr();
 		}
-    }
-#endif
-    if ((opt.opzioneFiltro & 0x04)                                  // esclude messaggi di stato
-    &&  (rBufferIdxR != rBufferIdxW))
-    {
-        if  ((scsMessageRx[rBufferIdxR][0] > 2) && (scsMessageRx[rBufferIdxR][3] != 0))
-              IncrementBufferPtr();
-    }
-    if ((opt.opzioneFiltro & 0x02)       // esclude messaggi ack
-    &&  (rBufferIdxR != rBufferIdxW))
-    {
-        if  ((scsMessageRx[rBufferIdxR][0] == 1) && (scsMessageRx[rBufferIdxR][1] == 0xA5))
-              IncrementBufferPtr();
-    }
-
-    if ((opt.opzioneFiltro & 0x01)       // esclude messaggi doppi
-    &&  (rBufferIdxR != rBufferIdxW)
-    &&  (rBufferIdxR != rBufferIdxP))
-    {
-        f = 1;
-        l = scsMessageRx[rBufferIdxR][0];
-        for (m=0; m<=l;m++)
-        {
-            if (scsMessageRx[rBufferIdxR][m] != scsMessageRx[rBufferIdxP][m])   f = 0;
-        }
-        if (f)   IncrementBufferPtr();
-    }
-    if  (rBufferIdxR != rBufferIdxP)
-    {
-         rBufferIdxP = rBufferIdxR;
-    }
-
-
-    if (sm_command ==  SM_READ_DEQUEUE)
-    {
-        AnswerMsg();
-        if (rBufferIdxR != rBufferIdxW)
-            IncrementBufferPtr();
-        sm_command = SM_WAIT_HEADER;
-    }
-
-    if ((sm_stato   ==  SM_TEST_MODE)
-    &&  (rBufferIdxR != rBufferIdxW))
-    {
-        if ((scsMessageRx[rBufferIdxR][0] == 8) &&
-            (scsMessageRx[rBufferIdxR][1] == dataByte.data[0]) &&
-            (scsMessageRx[rBufferIdxR][2] == dataByte.data[1]) &&
-            (scsMessageRx[rBufferIdxR][3] == dataByte.data[2]) &&
-            (scsMessageRx[rBufferIdxR][4] == dataByte.data[3]) &&
-            (scsMessageRx[rBufferIdxR][5] == dataByte.data[4]) &&
-            (scsMessageRx[rBufferIdxR][6] == dataByte.data[5]) &&
-            (scsMessageRx[rBufferIdxR][7] == dataByte.data[6]) &&
-            (scsMessageRx[rBufferIdxR][8] == dataByte.data[7]) )
-			putcUSBwait('k');
 		else
+			IncrementBufferPtr();
+	}
+	else
+	{
+		if (sm_command ==  SM_READ_DEQUEUE)
 		{
-			putcUSBwait('N');
-			if (opt.opzioneModo == 'A')
-				LogScsDisplay();
-			testCounter = 0;
-			putrsUSBwait("\r\nTest FAILED!!!");
-			sm_stato = SM_HOME;
+			AnswerMsg();
+			sm_command = SM_WAIT_HEADER;
 		}
-		dataByte.data[0]++;
-		dataByte.data[1]--;
-		dataByte.data[2]++;
-		dataByte.data[3]--;
-		dataByte.data[4]++;
-		dataByte.data[5]--;
-		dataByte.data[6]++;
-		queueWrite(8);
-
-		putcUSBwait('.');
-		testCounter--;
-		if (testCounter == 0) 
-		{
-			sm_stato = SM_HOME;
-			putrsUSBwait("\r\nTest O.K.!");
-		}
-		IncrementBufferPtr();
-    }
-
-    if ((sm_stato   ==  SM_READ_WAIT)
-    &&  (rBufferIdxR != rBufferIdxW))
-    {
-        AnswerMsg();
-        IncrementBufferPtr();
-        sm_stato = SM_HOME;
-    }
-
-    if ((sm_stato   ==  SM_LOG_WAIT)
-    &&  (rBufferIdxR != rBufferIdxW))
-    {
-        if (opt.opzioneModo == 'A')
-            LogScsDisplay();
-        else
-            AnswerMsg();
-
-        IncrementBufferPtr();
-    }
-
-    if ((sm_stato   ==  SM_ECHO_ON)
-    &&  (rBufferIdxR != rBufferIdxW))
-    {
-		l = scsMessageRx[rBufferIdxR][0];
-		f = 1;
-		m = 0;
-		while (m < l)
-		{
-        	dataByte.data[m++] = scsMessageRx[rBufferIdxR][f++];
-		}
-        queueWrite(l);
-        IncrementBufferPtr();
-    }
+	}
 }
+
+
 
 // * * * * * * * * * * VECCHI * * * * * * * 
 /*
