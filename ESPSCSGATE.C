@@ -1,6 +1,6 @@
 #define TITLE    "ScsGAte"
 
-#define VERSION  "SCS 19.375"
+#define VERSION  "SCS 19.378"
 #define EEPROM_VER	0x8D		// per differenziare scs e knx
 #define UART1_BUFFER    64      // numero bytes buffer uart1 interrupt
 #define UART1_INTERRUPT         // numero bytes buffer uart1 interrupt
@@ -271,7 +271,8 @@ BYTE	uartTrace = 0;
         SM_READ_WAIT,
         SM_LOG_WAIT,
         SM_ECHO_ON,
-        SM_TEST_MODE
+        SM_TEST_MODE,
+        SM_TEST_W_MODE
     }   sm_stato   = SM_HOME;
 // ===================================================================================
     enum _SM_MODO
@@ -283,6 +284,10 @@ BYTE	uartTrace = 0;
 BYTE    writeLength;            //    [1-F] data length
 BYTE    dataLength;             //    [1-F] data length
 BYTE	testCounter;
+BYTE    testPhase;
+BYTE	test_destin;
+BYTE	test_source;
+BYTE	test_command;
 // ===================================================================================
 typedef union _SCS_OPTIONS {
   struct {
@@ -628,18 +633,22 @@ BYTE VrValue;
         CVRCONbits.CVR = VrValue;   // ref value from 0 to 31
         Delay10us(50);
     }
+
+//	putrsUSBwait("\r\nComparator Vi: ");
+//	itoa((int)VrValue, RS_Out_Buffer);
+//	putsUSBwait(RS_Out_Buffer);
+
+	if ((VrValue > 20) && (VrValue < 28))	// resistenza 1.5k collegata a +3.3V
+	{
+    if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,50 Volts // se alimentazione 3.3V
+    if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,60 Volts // se alimentazione 3.3V
+    if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,70 Volts // se alimentazione 3.3V
+	}
+
     if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,10 Volts // se alimentazione 3.3V
     if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,20 Volts // se alimentazione 3.3V
     if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,30 Volts // se alimentazione 3.3V
     if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,40 Volts // se alimentazione 3.3V : 1,5 x 13 = 3,5V
-
-  #ifdef PULL_3
-    if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,50 Volts // se alimentazione 3.3V
-    if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,60 Volts // se alimentazione 3.3V
-    if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,70 Volts // se alimentazione 3.3V
-  #endif
-
-	CVRCONbits.CVR = VrValue;   // ref value from 0 to 31
 
 //  CM1CONbits.EVPOL = 0b01; // interrupt on rising  edge  (INPUT FALLING)
     PIR4bits.CMP1IF  = 0;    // clear interrupt
@@ -794,6 +803,7 @@ void AppInitialize(void)
 // ******************************************************************************/
 void IncrementBufferPtr(void)
 {
+//	putcUSBwait('s'); ////////////////////////////// test
     rBufferIdxR++;
     if (rBufferIdxR >= SCSBUFMAX) rBufferIdxR = 0;
 }
@@ -1137,9 +1147,7 @@ void InputMapping(void)
                           if  (opt.opzioneModo == 'A')
                           {
 							  m = getUSBwait();
-							  if (m != 'S')
-								  putcUSBwait('E');
-							  else
+							  if (m == 'S')
 							  {
 								  sm_stato   = SM_TEST_MODE;
 								  dataByte.data[0] = 0x9A;
@@ -1150,13 +1158,40 @@ void InputMapping(void)
 								  dataByte.data[5] = 0x34;
 								  dataByte.data[6] = 0x56;
 								  dataByte.data[7] = 0x78;
+								  rBufferIdxW = 0;
+								  rBufferIdxR = 0;
 								  queueWrite(8);
 								  putrsUSBwait("\r\nTesting: r");
 								  putcUSBwait('.');
 								  testCounter = 200;
+							  }
+							  else
+							  if (m == 'W')
+							  {
+								  sm_stato   = SM_TEST_W_MODE;
 								  rBufferIdxW = 0;
 								  rBufferIdxR = 0;
+
+								 test_destin = 0xFF;
+								 test_source = 0x80;
+								 test_command = 0x55;
+
+								 dataByte.TopByte = 0xA8;
+								 dataByte.DestinationAddress = test_destin;
+								 dataByte.SourceAddress = test_source;
+								 dataByte.CommandType = CMDTYPE_SET;	// 18.4A
+								 dataByte.CommandValue = test_command;
+								 dataByte.CheckByte = dataByte.data[1]^dataByte.data[2]^dataByte.data[3]^dataByte.data[4];
+								 dataByte.BottomByte = 0xA3;
+								 queueWrite(7);
+
+								  putrsUSBwait("\r\nTesting: r");
+								  putcUSBwait('.');
+								  testCounter = 200;
+								  testPhase = 0;
 							  }
+							  else
+								  putcUSBwait('E');
 						  }
 						  else
 							  putcUSBwait('E');
@@ -1331,8 +1366,9 @@ void InputMapping(void)
                           if  (opt.opzioneModo == 'A')
                           {
                               opt.Vref = SetInternalVref();
+							  CVRCONbits.CVR = opt.Vref;
                               putcUSBwait('k');
-                              putrsUSBwait("Internal Vref: ");
+                              putrsUSBwait("\r\nInternal Vref: ");
                               itoa((int)opt.Vref,RS_Out_Buffer);
                               putsUSBwait(RS_Out_Buffer);
                               putrsUSBwait("\r\n");
@@ -2744,7 +2780,9 @@ BYTE increment;
 				if ((scsMessageRx[rBufferIdxR][0] == 7) &&
 					(scsMessageRx[rBufferIdxR][1] == 0xA8) &&
 					(scsMessageRx[rBufferIdxR][4] == 0x12) &&
-					(scsMessageRx[rBufferIdxR][7] == 0xA3) )
+					(scsMessageRx[rBufferIdxR][7] == 0xA3) &&
+					(sm_stato   !=  SM_TEST_MODE) &&
+					(sm_stato   !=  SM_TEST_W_MODE))
 				{
 					if (scsMessageRx[rBufferIdxR][2] < 0xB0)
 						didx = scsMessageRx[rBufferIdxR][2];
@@ -2869,47 +2907,6 @@ BYTE increment;
 				sm_command = SM_WAIT_HEADER;
 			}
 
-			if (sm_stato   ==  SM_TEST_MODE)
-			{
-				if ((scsMessageRx[rBufferIdxR][0] == 8) &&
-					(scsMessageRx[rBufferIdxR][1] == dataByte.data[0]) &&
-					(scsMessageRx[rBufferIdxR][2] == dataByte.data[1]) &&
-					(scsMessageRx[rBufferIdxR][3] == dataByte.data[2]) &&
-					(scsMessageRx[rBufferIdxR][4] == dataByte.data[3]) &&
-					(scsMessageRx[rBufferIdxR][5] == dataByte.data[4]) &&
-					(scsMessageRx[rBufferIdxR][6] == dataByte.data[5]) &&
-					(scsMessageRx[rBufferIdxR][7] == dataByte.data[6]) &&
-					(scsMessageRx[rBufferIdxR][8] == dataByte.data[7]) )
-					putcUSBwait('k');
-				else
-				{
-					putcUSBwait('N');
-					if (opt.opzioneModo == 'A')
-						LogScsDisplay();
-					testCounter = 0;
-					putrsUSBwait("\r\nTest FAILED!!!");
-					sm_stato = SM_HOME;
-				}
-				dataByte.data[0]++;
-				dataByte.data[1]--;
-				dataByte.data[2]++;
-				dataByte.data[3]--;
-				dataByte.data[4]++;
-				dataByte.data[5]--;
-				dataByte.data[6]++;
-				queueWrite(8);
-
-				putcUSBwait('.');
-				testCounter--;
-				if (testCounter == 0) 
-				{
-					sm_stato = SM_HOME;
-					putrsUSBwait("\r\nTest O.K.!");
-				}
-				increment = 1;
-			}  // (sm_stato   ==  SM_TEST_MODE)
-
-
 //   A8 <dest> <source> <type> <cmd> XX A3
 //          dest B0-.. pulsanti
 // type=12 (comandi) o 15 (query)
@@ -2960,13 +2957,133 @@ BYTE increment;
 				queueWrite(l);
 				increment = 1;		// messaggio scodato
 			}
-			if (increment)
-				IncrementBufferPtr();  // scodato
-
 		}		// (MsgValido())
 
 		else
-			IncrementBufferPtr();		// msg non valido
+		{
+			increment = 1;		// messaggio scodato
+		}
+
+		if (sm_stato   ==  SM_TEST_W_MODE)
+		{
+			increment = 1;
+			if (testPhase == 0)
+			{
+				if ((scsMessageRx[rBufferIdxR][0] != 1) ||
+					(scsMessageRx[rBufferIdxR][1] != 0xA5))
+				{
+					putcUSBwait('N');
+					if (opt.opzioneModo == 'A')
+						LogScsDisplay();
+					testCounter = 0;
+					testPhase = 0;
+					putrsUSBwait("\r\nTest FAILED!!!");
+					sm_stato = SM_HOME;
+				}
+				else
+				{
+//					putcUSBwait('0'+testPhase);
+					testPhase++;
+				}
+			}
+			else
+			{
+				if ((scsMessageRx[rBufferIdxR][0] != 7) ||
+					(scsMessageRx[rBufferIdxR][1] != 0xA8) ||
+					(scsMessageRx[rBufferIdxR][3] != test_destin) ||
+					(scsMessageRx[rBufferIdxR][4] != CMDTYPE_SET) ||
+					(scsMessageRx[rBufferIdxR][5] != test_command) ||
+//					(scsMessageRx[rBufferIdxR][6] != (scsMessageRx[rBufferIdxR][2] ^ scsMessageRx[rBufferIdxR][3] ^ scsMessageRx[rBufferIdxR][4] ^ scsMessageRx[rBufferIdxR][5])) ||
+					(scsMessageRx[rBufferIdxR][7] != 0xA3))
+				{
+					putcUSBwait('N');
+					if (opt.opzioneModo == 'A')
+						LogScsDisplay();
+					testCounter = 0;
+					testPhase = 0;
+					putrsUSBwait("\r\nTest FAILED!!!");
+					sm_stato = SM_HOME;
+				}
+				else
+				{
+//					putcUSBwait('0'+testPhase);
+					testPhase++;
+				}
+
+				if (testPhase > 3)
+				{
+					testCounter--;
+					testPhase = 0;
+					if (testCounter == 0)
+					{
+						sm_stato = SM_HOME;
+						putrsUSBwait("\r\nTest O.K.!");
+					}
+					else
+					{
+						putcUSBwait('k');
+						test_destin++;
+						test_source--;
+						test_command++;
+						test_command++;
+
+						dataByte.TopByte = 0xA8;
+						dataByte.DestinationAddress = test_destin;
+						dataByte.SourceAddress = test_source;
+						dataByte.CommandType = CMDTYPE_SET;	// 18.4A
+						dataByte.CommandValue = test_command;
+						dataByte.CheckByte = dataByte.data[1]^dataByte.data[2]^dataByte.data[3]^dataByte.data[4];
+						dataByte.BottomByte = 0xA3;
+						queueWrite(7);
+						putcUSBwait('.');
+					}
+				}
+			}
+		}
+		else
+		if (sm_stato   ==  SM_TEST_MODE)
+		{
+			if ((scsMessageRx[rBufferIdxR][0] == 8) &&
+				(scsMessageRx[rBufferIdxR][1] == dataByte.data[0]) &&
+				(scsMessageRx[rBufferIdxR][2] == dataByte.data[1]) &&
+				(scsMessageRx[rBufferIdxR][3] == dataByte.data[2]) &&
+				(scsMessageRx[rBufferIdxR][4] == dataByte.data[3]) &&
+				(scsMessageRx[rBufferIdxR][5] == dataByte.data[4]) &&
+				(scsMessageRx[rBufferIdxR][6] == dataByte.data[5]) &&
+				(scsMessageRx[rBufferIdxR][7] == dataByte.data[6]) &&
+				(scsMessageRx[rBufferIdxR][8] == dataByte.data[7]) )
+				putcUSBwait('k');
+			else
+			{
+				putcUSBwait('N');
+				if (opt.opzioneModo == 'A')
+					LogScsDisplay();
+				testCounter = 0;
+				putrsUSBwait("\r\nTest FAILED!!!");
+				sm_stato = SM_HOME;
+			}
+			dataByte.data[0]++;
+			dataByte.data[1]--;
+			dataByte.data[2]++;
+			dataByte.data[3]--;
+			dataByte.data[4]++;
+			dataByte.data[5]--;
+			dataByte.data[6]++;
+			queueWrite(8);
+
+			putcUSBwait('.');
+			testCounter--;
+			if (testCounter == 0) 
+			{
+				sm_stato = SM_HOME;
+				putrsUSBwait("\r\nTest O.K.!");
+			}
+			increment = 1;
+		}  // (sm_stato   ==  SM_TEST_MODE)
+
+		if (increment)
+			IncrementBufferPtr();  // scodato
+
 	}
 	else
 	{				// nessun messaggio da scodare

@@ -4,7 +4,6 @@
 #ifndef _ESPSCSGATE_H
 #define _ESPSCSGATE_H
 #define HW 160318
-#define PULL_3
 
 /* 
 standard
@@ -52,7 +51,7 @@ ricalcolati per alimentatore knx
   #define INIT_PORTC  (0b01000000) //
   #define SCSTX3       LATCbits.LATC4
   #define USE_UART1    // per colloquio con ESP
-  #define USE_UART2    // per colloquio con USB
+//  #define USE_UART2    // per colloquio con USB
 // ===================================================================================
 #endif
 

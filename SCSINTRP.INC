@@ -14,8 +14,10 @@
 #define SCS_INPUT          CMSTAT,CMP1OUT
 #define SCS_OUT            LATC,RC4
 #define SCS_LED            LATA,RA5
-#define UART_LED           LATA,RA1
+; #define UART_LED           LATA,RA1
+; #define SYNCHWOUT          LATB,RB6
+; #define SYNCHWERR          LATB,RB6
+
 #define SCS_INTERRUPT_IF   PIR4,CMP1IF
 #define SCS_INTERRUPT_IE   PIE4,CMP1IE
 ; ---------------------------------------------------------------------------------
-
