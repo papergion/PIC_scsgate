@@ -1,6 +1,6 @@
 #define TITLE    "ScsGAte"
 
-#define VERSION  "SCS 19.37E"
+#define VERSION  "SCS 19.37J"
 #define EEPROM_VER	0x8D		// per differenziare scs e knx
 #define UART1_BUFFER  64        // numero bytes buffer uart1 interrupt
 #define UART1_INTERRUPT         // numero bytes buffer uart1 interrupt
@@ -255,7 +255,9 @@ BYTE	uartTrace = 0;
 									 //   '5':  lista ascii
 									 //   '6':  dati singola tapparella hex mode 
 									 //   '7':  ri-pubblica tutte le posizioni
+									 //   '8':  aggiorna una tapparella
 									 //   '9':  pulisce tutta la tabella
+									 //   'c':  clear posizioni
 
 		SM_WAIT_WRITE_LOOP_I,   //  "@Z[value] write loop"
         SM_WAIT_WRITE_LOOP,     //  "@z[value] write loop"
@@ -921,13 +923,16 @@ BYTE s,n,l;
 void AnswerMsgInternal(void)
 {
 BYTE s,n,len;
+// <top> <destin> <source> <tpu> <data> <chk>
+//  --     ====     ====    ====  ====   --    --
+//  A8      10       dd      12    00    cc    A3
 
     len = scsMessageRx[rBufferIdxR][0];	// 7
     if (len > 15) len = 15;
 	s = 2;			// start ptr
 	len -= 3;	        // length
 
-	putcUSBwait(0xF0+len+1);	// internal answer, + length + 1
+	putcUSBwait(0xF0+len+1); // internal answer, + length + 1 = 0xF5
 	putcUSBwait('y');	// stamp
 
 	n = 0;
@@ -1163,6 +1168,21 @@ void InputMapping(void)
 								  dataByte.data[7] = 0xCD;
 								  queueWrite(8);
 								  putrsUSBwait("\r\nSPIKE test requested");
+							  }
+							  else
+							  if (m == 'T')  // telegrams test
+							  {
+								  putrsUSBwait("\r\nTELEGRAM test...");
+								  dataByte.data[0] = 0x9A;
+								  dataByte.data[1] = 0xBC;
+								  dataByte.data[2] = 0xDE;
+								  dataByte.data[3] = 0xF0;
+								  dataByte.data[4] = 0x12;
+								  dataByte.data[5] = 0x34;
+								  dataByte.data[6] = 0xEF;
+								  dataByte.data[7] = 0x01;
+								  queueWrite(8);
+								  putrsUSBwait("\r\nTELEGRAM test requested");
 							  }
 							  else
 							  if (m == 'S')
@@ -1719,7 +1739,7 @@ void InputMapping(void)
 
 
             case SM_WAIT_WRITE_LENGTH:  //    "@W[1-F][data] write"
-                 if  (opt.opzioneModo == 'X')
+                 if  ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
                  {
                      writeLength = choice0;
                  }
@@ -1829,6 +1849,7 @@ void InputMapping(void)
 				 //   '7':  ri-pubblica tutte le posizioni
 				 //   '8':  inserisce o modifica tapparella (HEX)
 				 //   '9':  pulisce tutta la tabella
+				 //   'c':  clear posizioni
 
 			case SM_WAIT_WRITE_TAPP_SETUP:	// setup tapparelle a %  @u<cmd>   0=no   1=raccogli i dati   2=online   9=ripulisci
                  switch (choice0)
@@ -1861,8 +1882,11 @@ void InputMapping(void)
 				 case '1':  // data collection
 				 case '3':  // open
 				 case '4':  // open without publish position
-                     opt.tapparelle_pct = choice0 - '0';
-					 Write_config(0); // scrive sempre
+                     if (opt.tapparelle_pct != (choice0 - '0'))
+					 {
+	                     opt.tapparelle_pct = choice0 - '0';
+						 Write_config(0); // scrive sempre
+					 }
 					 if (ee_avoid_answer == 0)
 							putcUSBwait('k');
 					break;
@@ -1901,7 +1925,7 @@ void InputMapping(void)
 					break;
 
 				 case '6':  // dati singola tapparella hex
-     				if (opt.opzioneModo == 'X')
+                    if  ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
 					{
 						n = getUSBwait();
 						m = 0;
@@ -1992,13 +2016,13 @@ void InputMapping(void)
 				 	 break;
 
 				 case '8':	// update tab !!!  - '8' <devx> <type> <maxpH> <maxpL>
-     				 if (opt.opzioneModo == 'X')
+                     if  ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
 					 {
 						n = getUSBwait();   // device id
 						m = getUSBwait();   // device type
 						wv.byte.HB = getUSBwait();   // max position H (se devtype 9)
 						wv.byte.LB = getUSBwait();   // max position L (se devtype 9)
-
+						if (wv.Val > 1200) wv.Val = 1200;
 						if ((n > 0) && (n < DEV_NR) && (m > 0) && (m < 32))
 						{
 						   devc[n] = m;
@@ -2009,9 +2033,15 @@ void InputMapping(void)
 							{
 								if (devicetappa[b].device == n)
 								{
-									devicetappa[b].maxposition = wv.Val;
-									Write_tapparelle();
-									break;
+									if (devicetappa[b].maxposition != wv.Val)
+									{
+										devicetappa[b].maxposition = wv.Val;
+								//		Write_tapparelle();
+										Write_eep_array(&devicetappa[b], (b*3)+EE_TAPPA_SETUP+1, 3);
+										DelayMs(10);
+									}
+									putcUSBwait('k');
+									b = 250;
 								}
 								b++;
 							}
@@ -2020,7 +2050,12 @@ void InputMapping(void)
 								maxtapp++;
 								devicetappa[b].device = n;
 								devicetappa[b].maxposition = wv.Val;
-								Write_tapparelle();
+							//	Write_tapparelle();
+								Write_b_eep (EE_TAPPA_SETUP, maxtapp);
+								Busy_eep ();
+								Write_eep_array(&devicetappa[b], (b*3)+EE_TAPPA_SETUP+1, 3);
+								DelayMs(10);
+								putcUSBwait('k');
 							}
 						   } // m == 9
 						}
@@ -2039,12 +2074,28 @@ void InputMapping(void)
 						tapparella[m].timeout = 0;		//      [] timeout attuale (in unita da 0,1 secondi)
 						m++;
 					 }
+					 if (maxtapp)
+						 Write_tapparelle();
 					 maxtapp = 0;
-					 Write_tapparelle();
- 	 				 opt.tapparelle_pct = 0;
-					 Write_config(0); // scrive sempre
-					 if (ee_avoid_answer == 0)
-							putcUSBwait('k');
+                     if (opt.tapparelle_pct != 0)
+					 {
+	 	 				 opt.tapparelle_pct = 0;
+						 Write_config(0); // scrive sempre
+					 }
+//					 if (ee_avoid_answer == 0)
+					 putcUSBwait('k');
+					 break;
+
+				 case 'c':	// clear posizioni !!!
+					 m = 0;
+					 while (m<MAXTAPP)
+					 {
+						tapparella[m].direction.Val = 0;//      [] direzione (0=ferma  9=giu  8=su )
+						tapparella[m].position = 0;		//      [] posizione attuale (in unità da 0,1 secondi)
+						tapparella[m].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+						tapparella[m].timeout = 0;		//      [] timeout attuale (in unita da 0,1 secondi)
+						m++;
+					 }
 					 break;
 
 				 default:
@@ -2142,7 +2193,7 @@ void InputMapping(void)
 				 break;
 
             case SM_WAIT_WRITE_DATA:		//    "@W[1-F][data] : write"
-                 if (opt.opzioneModo == 'X')
+                 if  ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
                  {
                      dataByte.data[dataLength++] = choice0;
 					 check ^= choice0; 
@@ -2225,7 +2276,7 @@ void InputMapping(void)
                  break;
 
             case SM_WAIT_WRITE_CMD:  //  "@w[value][destin] write"
-                 if (opt.opzioneModo == 'X')
+                 if  ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
                  {
                      writeValue = choice0;
                      sm_command = SM_WAIT_WRITE_DESTIN;
@@ -2257,7 +2308,7 @@ void InputMapping(void)
                  break;
 
             case SM_WAIT_WRITE_DESTIN:  //  "@w[value][destin] write"
-                 if (opt.opzioneModo == 'X')
+                 if  ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
                  {
                      writeDest  = choice0;
                  }
@@ -2396,7 +2447,7 @@ void InputMapping(void)
 	                     putcUSBwait(0xFF);
 				}
 				else
-				if (opt.opzioneModo == 'X')
+                if  ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
 				{
 					putcUSBwait('D');
 					putcUSBwait(didx);
@@ -2421,7 +2472,7 @@ void InputMapping(void)
 
 
             case SM_WAIT_WRITE_QUERY:  //  "@t[destin] write query"
-                 if (opt.opzioneModo == 'X')
+                 if  ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
                  {
                      writeDest  = choice0;
                  }
@@ -2478,7 +2529,7 @@ void InputMapping(void)
                  break;
 
             case SM_WAIT_WRITE_LOOP_I:  //  "@Z[value] write loop"
-                 if (opt.opzioneModo == 'X')
+                 if  ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
                  {
                      writeDest  = choice0;
                  }
@@ -2532,7 +2583,7 @@ void InputMapping(void)
                  break;
 
             case SM_WAIT_WRITE_LOOP:  //  "@z[value] write loop"
-                 if (opt.opzioneModo == 'X')
+                 if  ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
                  {
                      writeDest  = choice0;
                  }
@@ -2657,6 +2708,7 @@ BYTE  try;
 					putcUSBwait(devicetappa[ixPublish].device);	// device
 					putcUSBwait((BYTE)percent);					// percent position
 				}
+/*
 				else
 				if (opt.opzioneModo == 'A')
 				{
@@ -2670,6 +2722,7 @@ BYTE  try;
 					putcUSBwait(devicetappa[ixPublish].device);	// device
 					putcUSBwait((BYTE)percent);					// percent position
 				}
+*/
 				tapparella[ixPublish].direction.bits.b7 = 1;
 			}
 			if (++ixPublish >= maxtapp)	ixPublish = 0;
@@ -3192,55 +3245,10 @@ void getUART(void)
 char getUSBwait(void)
 {
 BYTE c;
-#if defined(USE_UART2)
-    if (uart_echo < 3)
-	{
-		if (uart_in_use == 2)
-		{
-			if (RCSTA2bits.OERR) {
-				RCSTA2bits.CREN = 0;
-				RCSTA2bits.CREN = 1;
-			}
-			while (PIR3bits.RC2IF == 0)  ClrWdt();
-			c = RCREG2;
-			PIR3bits.RC2IF = 0;
-			uartRc = 1;
-			return c;
-		}
-	}
-#endif
-
-#if defined(USE_UART1)
-	if (uart_in_use == 1)
-    {
-
-#ifdef UART1_BUFFER
-        while (uMax == 0)  ClrWdt();
-		c = uartMessage[uPtrR++];
-        if (uPtrR >= UART1_BUFFER) uPtrR = 0;
-		uMax--;
-		if (uState)	// uart error !!!
-		{
-			if (uState & 1) uartFERR++;;
-			if (uState & 2) uartOERR++;;
-			uState = 0;
-		}
-#else
-        if (RCSTA1bits.OERR) {
-            RCSTA1bits.CREN = 0;
-            RCSTA1bits.CREN = 1;
-			uartOERR++;
-        }
-        while (PIR1bits.RC1IF == 0)  ClrWdt();
-        c = RCREG1;
-        PIR1bits.RC1IF = 0;
-#endif
-        uartRc = 1;
-        return c;
-    }
-#endif
-    uartRc = 0;
-    return 0;
+	do {
+		c = getUSBnowait();
+	}  while (uartRc  == 0);
+	return c;
 }
 
 // ===================================================================================
