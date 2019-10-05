@@ -1,6 +1,6 @@
 #define TITLE    "ScsGAte"
 
-#define VERSION  "SCS 19.37J"
+#define VERSION  "SCS 19.420"
 #define EEPROM_VER	0x8D		// per differenziare scs e knx
 #define UART1_BUFFER  64        // numero bytes buffer uart1 interrupt
 #define UART1_INTERRUPT         // numero bytes buffer uart1 interrupt
@@ -2028,6 +2028,11 @@ void InputMapping(void)
 						   devc[n] = m;
                            if (m == 9)
 						   {
+							if (opt.tapparelle_pct == 0)
+							{
+								opt.tapparelle_pct = 3;
+								Write_config(0); // scrive sempre
+							}
 							b = 0;
 							while (b < maxtapp)
 							{
