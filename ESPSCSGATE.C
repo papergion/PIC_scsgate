@@ -1,6 +1,8 @@
-#define TITLE    "ScsGAte"
+#define TITLE    "EspScsGAte"
 
-#define VERSION  "SCS 19.420"
+#define VERSION  "SCS 19.421"
+// tabella devc strutturata
+
 #define EEPROM_VER	0x8D		// per differenziare scs e knx
 #define UART1_BUFFER  64        // numero bytes buffer uart1 interrupt
 #define UART1_INTERRUPT         // numero bytes buffer uart1 interrupt
@@ -136,8 +138,18 @@ void getUART(void);
 #pragma udata DATARS
 char RS_Out_Buffer[120];
 // ===================================================================================
+typedef union _DEVICE   { // 0xFF:empty
+  struct {
+	  unsigned char renew  : 1;	// 1:state not known
+	  unsigned char fill1  : 3;	// 
+	  unsigned char device : 4;	// 0xF:empty   1:switch   3:dimmer   8:tapparella   9:tapparella pct
+        };
+  unsigned char all;
+  BYTE_VAL      Bdev;
+} DEVICE;
+// ===================================================================================
 #pragma udata TABDEV
-BYTE devc[DEV_NR];	// 0xFF:empty    01:switch    03:dimmer    08:tapparella
+DEVICE devc[DEV_NR];	// 0xFF:empty    01:switch    03:dimmer    08:tapparella
 BYTE didx;
 BYTE dlen;
 // ===================================================================================
@@ -1864,7 +1876,7 @@ void InputMapping(void)
 							if (devicetappa[m].maxposition < tapparella[m].position)
 								devicetappa[m].maxposition = tapparella[m].position;
 							didx = devicetappa[m].device;
-							devc[didx] = 9;
+							devc[didx].all = 9;
 							if (devicetappa[m].maxposition > 0)
 								n++;
                             tapparella[m].direction.Val = 0x80;
@@ -2025,7 +2037,7 @@ void InputMapping(void)
 						if (wv.Val > 1200) wv.Val = 1200;
 						if ((n > 0) && (n < DEV_NR) && (m > 0) && (m < 32))
 						{
-						   devc[n] = m;
+						   devc[n].all = m;
                            if (m == 9)
 						   {
 							if (opt.tapparelle_pct == 0)
@@ -2418,7 +2430,7 @@ void InputMapping(void)
 					didx = 0;
 					while (didx < DEV_NR)
 					{
-						devc[didx++] = 0xFF;
+						devc[didx++].all = 0xFF;
 					}
 // predisporre eventuali tapparelle
 					m = 0;
@@ -2427,7 +2439,7 @@ void InputMapping(void)
 						if ((devicetappa[m].device > 0) && (devicetappa[m].device < DEV_NR))
 						{
 							didx = devicetappa[m].device;
-							devc[didx] = 9;
+							devc[didx].all = 9;
 						}
 						m++;
 					}
@@ -2435,7 +2447,7 @@ void InputMapping(void)
 				 }
 				 else
 				 {
-					 while ((devc[didx] == 0xFF) && (didx < DEV_NR)) // sizeof(devc))
+					 while ((devc[didx].all == 0xFF) && (didx < DEV_NR)) 
 					 {
 						 didx++;
 					 }
@@ -2447,7 +2459,7 @@ void InputMapping(void)
 	                putcUSBwait('D');
 					putcUSBwait(didx);
 					if (didx < DEV_NR)
-	                     putcUSBwait(devc[didx]);
+	                     putcUSBwait(devc[didx].device);
 					else
 	                     putcUSBwait(0xFF);
 				}
@@ -2457,7 +2469,7 @@ void InputMapping(void)
 					putcUSBwait('D');
 					putcUSBwait(didx);
 					if (didx < DEV_NR)
-	                     putcUSBwait(devc[didx]);
+	                     putcUSBwait(devc[didx].device);
 					else
 	                     putcUSBwait(0xFF);
 				}
@@ -2466,7 +2478,7 @@ void InputMapping(void)
 					putcUSBwait('D');
 					puthexUSBwait(didx);
 					if (didx < DEV_NR)
-						puthexUSBwait(devc[didx]);
+						puthexUSBwait(devc[didx].all);
 					 else
 						puthexUSBwait(0xFF);
 				}
@@ -2790,12 +2802,25 @@ BYTE  try;
 					tapparella[ixTapp].direction.half.LS = 0;
 				}
 
-				if (tapparella[ixTapp].timeout > 50)	// timeout 5 secondi
+				if (opt.tapparelle_pct == 1)
 				{
-					tapparella[ixTapp].timeout = 0;
-					tapparella[ixTapp].request = 0xFFFF;
-					tapparella[ixTapp].direction.half.LS = 0;
-					TapparellaAction(devicetappa[ixTapp].device, STOP);  /// ??? sarà meglio ???
+					if (tapparella[ixTapp].timeout > 250)	// timeout 25 secondi - configurazione
+					{
+						tapparella[ixTapp].timeout = 0;
+						tapparella[ixTapp].request = 0xFFFF;
+						tapparella[ixTapp].direction.half.LS = 0;
+						TapparellaAction(devicetappa[ixTapp].device, STOP);  /// ??? sarà meglio ???
+					}
+				}
+				else
+				{
+					if (tapparella[ixTapp].timeout > 50)	// timeout 5 secondi - standard
+					{
+						tapparella[ixTapp].timeout = 0;
+						tapparella[ixTapp].request = 0xFFFF;
+						tapparella[ixTapp].direction.half.LS = 0;
+						TapparellaAction(devicetappa[ixTapp].device, STOP);  /// ??? sarà meglio ???
+					}
 				}
 				ixTapp++;
 			}
@@ -2888,7 +2913,6 @@ BYTE increment;
 		if (MsgValido())   // messaggio dal BUS  SCS <=============================
 		{
 			rBufferIdxP = rBufferIdxR;
-
 			if  (rBufferIdxR != rBufferIdxInternal)  // se non ancora trattato internamente
 			{
 				rBufferIdxInternal = rBufferIdxR;
@@ -2905,24 +2929,30 @@ BYTE increment;
 					if (scsMessageRx[rBufferIdxR][2] < 0xB0)
 						didx = scsMessageRx[rBufferIdxR][2];
 					else
+					{
 						didx = scsMessageRx[rBufferIdxR][3];
+						if ((scsMessageRx[rBufferIdxR][2] == 0xB3)  // gruppo/scenario
+						||  (scsMessageRx[rBufferIdxR][2] == 0xB4)) // allarme
+							didx = 0;
+					}
 
-					if ((didx > 0) && (didx < DEV_NR)) // (sizeof(devc)))
+
+					if ((didx > 0) && (didx < DEV_NR)) 
 					{
 						switch (scsMessageRx[rBufferIdxR][5])
 						{
 						case 0:
 						case 0x01:
-							if (devc[didx] == 0xFF)
-								devc[didx] = 1;
+							if (devc[didx].all == 0xFF)
+								devc[didx].all = 1;
 							break;
 						case 0x03:
 						case 0x04:
-							devc[didx] = 3;
+							devc[didx].all = 3;
 							break;
 // -----------------------------aggiorna anche tabella tapparelle-----------------------------
 						case 0x08:					// alza
-							if (devc[didx] != 9) devc[didx] = 8;
+							if (devc[didx].device != 9) devc[didx].all = 8;
 							if (opt.tapparelle_pct)
 							{
 								ixTapp = 0;
@@ -2945,7 +2975,7 @@ BYTE increment;
 							break;
 
 						case 0x09:					// abbassa
-							if (devc[didx] != 9) devc[didx] = 8;
+							if (devc[didx].device != 9) devc[didx].all = 8;
 							f = 0;
 							if (opt.tapparelle_pct)
 							{
@@ -2979,7 +3009,7 @@ BYTE increment;
 							break;
 
 						case 0x0A:                  // stop
-							if (devc[didx] != 9) devc[didx] = 8;
+							if (devc[didx].device != 9) devc[didx].all = 8;
 							if (opt.tapparelle_pct)
 							{
 								ixTapp = 0;
@@ -3003,7 +3033,7 @@ BYTE increment;
 // -------------------------------------------------------------------------------------------
 						default:
 							if ((scsMessageRx[rBufferIdxR][5] & 0x0F) == 0x0D)
-								devc[didx] = 3;
+								devc[didx].all = 3;
 							break;
 						}
 					}
@@ -3604,7 +3634,7 @@ void main(void)
 	didx = 0;
 	while (didx < DEV_NR)
 	{
-		devc[didx++] = 0xFF;
+		devc[didx++].all = 0xFF;
 	}
 
 
@@ -3623,7 +3653,7 @@ void main(void)
 	{
 		t = devicetappa[i].device;
 		if (t < DEV_NR)
-			devc[t] = 0x09;
+			devc[t].all = 0x89;
 		i++;
 	}
 
