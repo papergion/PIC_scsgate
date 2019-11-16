@@ -1,14 +1,15 @@
 #define TITLE    "EspScsGAte"
 
-#define VERSION  "SCS 19.421"
-// tabella devc strutturata
+#define VERSION  "SCS 19.502"
+// 19.422 riconosce stato allarme
+// 19.421 tabella devc strutturata
 
 #define EEPROM_VER	0x8D		// per differenziare scs e knx
 #define UART1_BUFFER  64        // numero bytes buffer uart1 interrupt
 #define UART1_INTERRUPT         // numero bytes buffer uart1 interrupt
 //#define UART1_CALL            // numero bytes buffer uart1 interrupt
 #define IMMEDIATE_ANSWER        // ricava lo stato anche dal comando (non solo dalla risposta di stato)
-#define DEV_NR		175	        // numero elementi tabella devices (0xAF)
+#define DEV_NR		210	        // numero elementi tabella devices (0xAF)
 
 #define inUART()   getUART()
 
@@ -140,16 +141,16 @@ char RS_Out_Buffer[120];
 // ===================================================================================
 typedef union _DEVICE   { // 0xFF:empty
   struct {
-	  unsigned char renew  : 1;	// 1:state not known
+	  unsigned char device : 4;	//msb - 0xF:empty   1:switch   3:dimmer   8:tapparella   9:tapparella pct   0E:allarme
 	  unsigned char fill1  : 3;	// 
-	  unsigned char device : 4;	// 0xF:empty   1:switch   3:dimmer   8:tapparella   9:tapparella pct
+	  unsigned char renew  : 1;	//  1:state not known
         };
   unsigned char all;
   BYTE_VAL      Bdev;
 } DEVICE;
 // ===================================================================================
 #pragma udata TABDEV
-DEVICE devc[DEV_NR];	// 0xFF:empty    01:switch    03:dimmer    08:tapparella
+DEVICE devc[DEV_NR]; // 0xFF:empty  01:switch  03:dimmer  08:tapparella  09:tapp%  0E:allarme
 BYTE didx;
 BYTE dlen;
 // ===================================================================================
@@ -271,8 +272,6 @@ BYTE	uartTrace = 0;
 									 //   '9':  pulisce tutta la tabella
 									 //   'c':  clear posizioni
 
-		SM_WAIT_WRITE_LOOP_I,   //  "@Z[value] write loop"
-        SM_WAIT_WRITE_LOOP,     //  "@z[value] write loop"
         SM_WAIT_TABSTART,       //  "@D[start]"
         SM_READ_DEQUEUE,        //  "@r
         SM_WAIT_RESET,          //  "@|| 
@@ -1117,12 +1116,29 @@ void InputMapping(void)
                      case 't':      // write query command
                           sm_command = SM_WAIT_WRITE_QUERY;
                           break;
-                     case 'Z':      // write loop test
-                          sm_command = SM_WAIT_WRITE_LOOP_I;
+                     case 'z':      
+                          sm_command = SM_WAIT_HEADER;
+                          if (opt.opzioneModo == 'A')
+                          {
+                              putrsUSBwait("\r\nNR LN AD TY");
+							  n = 0;
+							  while (n < DEV_NR)
+							  {
+//								  if ((devc[n].device != 0) && (devc[n].device != 0xF))
+								  if (devc[n].all != 0xFF)
+								  {
+		                              putrsUSBwait("\r\n");
+									  puthexUSBwait(n);
+									  putcUSBwait(' ');
+//									  puthexUSBwait(devc[n].all);
+									  puthexUSBwait(devc[n].device);
+								  }
+								  n++;
+							  }
+                              putrsUSBwait("\r\n");
+						  }
                           break;
-                     case 'z':      // write loop test
-                          sm_command = SM_WAIT_WRITE_LOOP;
-                          break;
+
                      case 'r':      // buffer read immediate
                           sm_command = SM_READ_DEQUEUE;
                           break;
@@ -2383,7 +2399,7 @@ void InputMapping(void)
 
 
             case SM_WAIT_TABSTART:  //  "@D[start]"
-//BYTE devc[DEV_NR];	// 0xFF:empty    01:switch    03:dimmer    08:tapparella
+//BYTE devc[DEV_NR];	// 0xFF:empty    01:switch    03:dimmer    08:tapparella  09:tapparella %    0E:allarme
 //BYTE didx;
                  if ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
                  {
@@ -2541,107 +2557,6 @@ void InputMapping(void)
                  queueWrite(7);
 				  if (ee_avoid_answer == 0)
 						putcUSBwait('k');
-                 sm_command = SM_WAIT_HEADER;
-                 dataTwin = 0;
-                 break;
-
-            case SM_WAIT_WRITE_LOOP_I:  //  "@Z[value] write loop"
-                 if  ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
-                 {
-                     writeDest  = choice0;
-                 }
-                 else
-                 {
-                     if ((choice0 >= '0') && (choice0 <= '9'))
-                     {
-                         thisHalf = choice0 - '0';
-                     }
-                     else
-                     if ((choice0 >= 'A') && (choice0 <= 'F'))
-                     {
-                         thisHalf   = choice0 - 'A' + 10;
-                     }
-                     else
-                     if ((choice0 >= 'a') && (choice0 <= 'f'))
-                     {
-                         thisHalf   = choice0 - 'a' + 10;
-                     }
-                     else
-                     {
-                         putcUSBwait('E');
-                         sm_command = SM_WAIT_HEADER;
-                         break;
-                     }
-                     if (dataTwin)
-                     {
-                         thisByte += thisHalf;
-                         writeDest = thisByte;
-                     }
-                     else
-                     {
-                         thisByte = thisHalf;
-                         thisByte<<=4;
-                         dataTwin = 1;
-                         break;
-                     }
-                 }
-                 dataByte.data[1] = writeDest;
-                 INTCONbits.GIEH     = 0;
-                 INTCONbits.GIEL     = 0;
-                 scsSendTest(writeDest);
-                 PIR4bits.CMP1IF  = 0;    // clear interrupt
-                 PIR2bits.TMR3IF  = 0;    // clear INTERRUPT FLAG
-                 INTCONbits.TMR0IF = 0;   // clear INTERRUPT FLAG
-                 INTCONbits.GIEH     = 1; // high priority interrupt enabled
-                 INTCONbits.GIEL     = 1; // low  priority interrupt enabled
-                 putcUSBwait('k');
-                 sm_command = SM_WAIT_HEADER;
-                 dataTwin = 0;
-                 break;
-
-            case SM_WAIT_WRITE_LOOP:  //  "@z[value] write loop"
-                 if  ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
-                 {
-                     writeDest  = choice0;
-                 }
-                 else
-                 {
-                     if ((choice0 >= '0') && (choice0 <= '9'))
-                     {
-                         thisHalf = choice0 - '0';
-                     }
-                     else
-                     if ((choice0 >= 'A') && (choice0 <= 'F'))
-                     {
-                         thisHalf   = choice0 - 'A' + 10;
-                     }
-                     else
-                     if ((choice0 >= 'a') && (choice0 <= 'f'))
-                     {
-                         thisHalf   = choice0 - 'a' + 10;
-                     }
-                     else
-                     {
-                         putcUSBwait('E');
-                         sm_command = SM_WAIT_HEADER;
-                         break;
-                     }
-                     if (dataTwin)
-                     {
-                         thisByte += thisHalf;
-                         writeDest = thisByte;
-                     }
-                     else
-                     {
-                         thisByte = thisHalf;
-                         thisByte<<=4;
-                         dataTwin = 1;
-                         break;
-                     }
-                 }
-                 dataByte.data[1] = writeDest;
-                 scsSendTest(writeDest);
-                 putcUSBwait('k');
                  sm_command = SM_WAIT_HEADER;
                  dataTwin = 0;
                  break;
@@ -2921,21 +2836,21 @@ BYTE increment;
 // -----------------------------aggiorna tabella dispositivi-------------------------------
 				if ((scsMessageRx[rBufferIdxR][0] == 7) &&
 					(scsMessageRx[rBufferIdxR][1] == 0xA8) &&
-					(scsMessageRx[rBufferIdxR][4] == 0x12) &&
 					(scsMessageRx[rBufferIdxR][7] == 0xA3) &&
 					(sm_stato   !=  SM_TEST_MODE) &&
 					(sm_stato   !=  SM_TEST_W_MODE))
 				{
+				  switch (scsMessageRx[rBufferIdxR][4])   
+				  {
+				  case 0x12:	// comando/stato automazione
 					if (scsMessageRx[rBufferIdxR][2] < 0xB0)
 						didx = scsMessageRx[rBufferIdxR][2];
 					else
 					{
 						didx = scsMessageRx[rBufferIdxR][3];
-						if ((scsMessageRx[rBufferIdxR][2] == 0xB3)  // gruppo/scenario
-						||  (scsMessageRx[rBufferIdxR][2] == 0xB4)) // allarme
+						if (scsMessageRx[rBufferIdxR][2] == 0xB3)  // gruppo/scenario
 							didx = 0;
 					}
-
 
 					if ((didx > 0) && (didx < DEV_NR)) 
 					{
@@ -3035,17 +2950,34 @@ BYTE increment;
 							if ((scsMessageRx[rBufferIdxR][5] & 0x0F) == 0x0D)
 								devc[didx].all = 3;
 							break;
-						}
+
+						} // switch  scsMessageRx[rBufferIdxR][5]
+					} // 	if ((didx > 0) && (didx < DEV_NR))
+					break;				
+
+				  case 0x43:	// stato allarme
+				  case 0x44:	// stato allarme
+				  case 0x49:	// stato allarme
+				  case 0x4E:	// stato allarme
+					if (scsMessageRx[rBufferIdxR][2] == 0xB4)
+						didx = scsMessageRx[rBufferIdxR][3];
+					else
+					{
+						didx = scsMessageRx[rBufferIdxR][2];
 					}
-				}
+					if ((didx > 0) && (didx < DEV_NR)) 
+					{
+						devc[didx].all = 0x0E;
+					}
+					break;
+
+				  default:
+					break;
+
+				  } //  switch (scsMessageRx[rBufferIdxR][4]
+				} //  if ((scsMessageRx[rBufferIdxR][0] == 7) &&
 // -------------------------------------------------------------------------------------------
-
-
-			}	// se non ancora trattato internamente
-
-
-
-
+			} // if  (rBufferIdxR != rBufferIdxInternal) : se non ancora trattato internamente
 
 
 			if (sm_command ==  SM_READ_DEQUEUE)
@@ -3083,12 +3015,12 @@ BYTE increment;
 			if (sm_stato   ==  SM_LOG_WAIT)
 			{
 				if (sm_modo == SM_MODO_INTERNO)
-					AnswerMsgInternal();
+					AnswerMsgInternal();		// invia ad ESP msg compresso 
 				else
 				if (opt.opzioneModo == 'A')
-					LogScsDisplay();
+					LogScsDisplay();			// invia ad ESP msg ascii
 				else
-					AnswerMsg();
+					AnswerMsg();				// invia ad ESP msg hex
 
 				increment = 1;		// messaggio scodato
 			}
