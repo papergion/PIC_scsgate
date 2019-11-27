@@ -1,6 +1,7 @@
 #define TITLE    "EspScsGAte"
 
-#define VERSION  "SCS 19.502"
+#define VERSION  "SCS 19.502a"
+// 19.502 correzione devc - adattamento a scskxxgate_v5
 // 19.422 riconosce stato allarme
 // 19.421 tabella devc strutturata
 
@@ -9,7 +10,7 @@
 #define UART1_INTERRUPT         // numero bytes buffer uart1 interrupt
 //#define UART1_CALL            // numero bytes buffer uart1 interrupt
 #define IMMEDIATE_ANSWER        // ricava lo stato anche dal comando (non solo dalla risposta di stato)
-#define DEV_NR		210	        // numero elementi tabella devices (0xAF)
+#define DEV_NR		210	        // numero elementi tabella devices (0xD2)
 
 #define inUART()   getUART()
 
@@ -141,9 +142,9 @@ char RS_Out_Buffer[120];
 // ===================================================================================
 typedef union _DEVICE   { // 0xFF:empty
   struct {
-	  unsigned char device : 4;	//msb - 0xF:empty   1:switch   3:dimmer   8:tapparella   9:tapparella pct   0E:allarme
-	  unsigned char fill1  : 3;	// 
-	  unsigned char renew  : 1;	//  1:state not known
+	  unsigned char device : 4;	//bit 0-3 - 0xF:empty   1:switch   3:dimmer   8:tapparella   9:tapparella pct   0E:allarme
+	  unsigned char fill1  : 3;	//bit 4-6 - non usato
+	  unsigned char renew  : 1;	//bit 7   - 1:stato sconosciuto
         };
   unsigned char all;
   BYTE_VAL      Bdev;
@@ -2960,7 +2961,7 @@ BYTE increment;
 				  case 0x49:	// stato allarme
 				  case 0x4E:	// stato allarme
 					if (scsMessageRx[rBufferIdxR][2] == 0xB4)
-						didx = scsMessageRx[rBufferIdxR][3];
+						didx = scsMessageRx[rBufferIdxR][3];     // log 0xC1
 					else
 					{
 						didx = scsMessageRx[rBufferIdxR][2];
@@ -3585,7 +3586,8 @@ void main(void)
 	{
 		t = devicetappa[i].device;
 		if (t < DEV_NR)
-			devc[t].all = 0x89;
+			devc[t].all = 0x09;
+//			devc[t].all = 0x89;
 		i++;
 	}
 
