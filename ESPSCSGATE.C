@@ -1,6 +1,7 @@
 #define TITLE    "EspScsGAte"
 
-#define VERSION  "SCS 19.502a"
+#define VERSION  "SCS 19.503"
+// 19.503 opzione per passaggio immediato a modalità monitor @o o http @0x17
 // 19.502 correzione devc - adattamento a scskxxgate_v5
 // 19.422 riconosce stato allarme
 // 19.421 tabella devc strutturata
@@ -1082,6 +1083,27 @@ void InputMapping(void)
                      case 'M':       // mode ascii-hex
                           sm_command = SM_WAIT_MODO;
                           break;
+                     case 'o':       // mode monitor (ascii, no filter, long msg, answer k)
+						  opt.opzioneModo = 'A';	// @MA
+						  opt.opzioneFiltro = 0;	// @F0
+						  opt.EfilterByte_A &= 0xBF;// include messaggi ack
+						  filterByte_A = opt.EfilterByte_A;
+						  opt.abbrevia.Val = '0';	// @Y0
+						  ee_avoid_answer = 0;
+						  Write_config(ee_avoid_memo);
+ 						  putcUSBwait('k');
+                          break;
+                     case 0x17:       // mode http (hex, filter 3, short msg, no answer)
+						  opt.opzioneModo = 'X';	// @MX
+						  opt.opzioneFiltro = 3;	// @F3
+						  opt.EfilterByte_A |= 0x40;// esclude messaggi ack
+						  filterByte_A = opt.EfilterByte_A;
+						  opt.abbrevia.Val = '1';	// @Y1
+                          sm_stato = SM_LOG_WAIT;	// @l
+						  ee_avoid_memo = 1;
+						  ee_avoid_answer = 1;
+						  Write_config(ee_avoid_memo);
+                          break;
                      case 'F':      // msg filter
                           sm_command = SM_WAIT_FILTRO;
                           break;
@@ -1541,7 +1563,7 @@ void InputMapping(void)
                  sm_command = SM_WAIT_HEADER;
                  break;
 
-            case SM_WAIT_FILTRO:  //    "@F[0-7] : filtro"
+			case SM_WAIT_FILTRO:  //    "@F[0-7] : filtro"
                  if ((choice0 >= '0') && (choice0 <= '7'))
                  {
                      if (opt.opzioneFiltro != (choice0 - '0'))
