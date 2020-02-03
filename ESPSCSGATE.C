@@ -1,6 +1,9 @@
 #define TITLE    "EspScsGAte"
 
-#define VERSION  "SCS 19.503"
+#define VERSION  "SCS 19.506"
+// 19.506 correzione ricezione UART1 su buffer da interrupt
+// 19.505 verifica splafonamenti di memoria...
+// 19.504 comando @TT valido anche in hex - per debug/test
 // 19.503 opzione per passaggio immediato a modalità monitor @o o http @0x17
 // 19.502 correzione devc - adattamento a scskxxgate_v5
 // 19.422 riconosce stato allarme
@@ -1060,6 +1063,10 @@ void InputMapping(void)
 						  ledLamps = 10;
 						  sm_command = SM_WAIT_HEADER;
                           break;
+                     case 0xF3:      // lampeggio frequentissimo
+						  ledLamps = 5;
+						  sm_command = SM_WAIT_HEADER;
+                          break;
                      case 0xFF:      // nessun lampeggio
 						  ledLamps = 0;
 						  sm_command = SM_WAIT_HEADER;
@@ -1202,7 +1209,26 @@ void InputMapping(void)
                           break;
 
                      case 'T':       // test mode  @TS   @TK
-                          if  (opt.opzioneModo == 'A')
+                          if  (opt.opzioneModo == 'X')
+                          {
+							  m = getUSBwait();
+							  if (m == 'T')  // telegrams test
+							  {
+								  dataByte.data[0] = 0x9A;
+								  dataByte.data[1] = 0xBC;
+								  dataByte.data[2] = 0xDE;
+								  dataByte.data[3] = 0xF0;
+								  dataByte.data[4] = 0x12;
+								  dataByte.data[5] = 0x34;
+								  dataByte.data[6] = 0xEF;
+								  dataByte.data[7] = 0x01;
+								  queueWrite(8);
+							  }
+							  else
+								  putcUSBwait('E');
+						  }
+						  else
+						  if  (opt.opzioneModo == 'A')
                           {
 							  m = getUSBwait();
 							  if (m == 'K')
@@ -1398,6 +1424,10 @@ void InputMapping(void)
                               putsUSBwait(RS_Out_Buffer);
 //							  uartFERR = 0;
 //							  uartOERR = 0;
+							  if (uartTrace)
+							  {
+								  putrsUSBwait("\r\nMEMORY FAULT!!! ");
+							  }
 
 							  putrsUSBwait("\r\nGestione tapparelle %: ");
 							  switch (opt.tapparelle_pct)
@@ -2600,8 +2630,16 @@ BYTE  try;
 	inUART();
 #endif
 
+	if ((uartTrace) && (ledLamps != 5))  // memory corruption
+	{
+		ledLamps = 5;
+	}
+
+
+
 	if (PIR1bits.TMR1IF) //   32mSec
     {
+
 // -----------------------------------------------------------------------------------------------------------
 		SystemTicks++;
         if (SystemTicks > 31) // 1,024 secondi
