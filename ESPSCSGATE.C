@@ -1,6 +1,7 @@
 #define TITLE    "EspScsGAte"
 
-#define VERSION  "SCS 19.506"
+#define VERSION  "SCS 19.507"
+// 19.507 contatore di esp restart
 // 19.506 correzione ricezione UART1 su buffer da interrupt
 // 19.505 verifica splafonamenti di memoria...
 // 19.504 comando @TT valido anche in hex - per debug/test
@@ -212,6 +213,7 @@ ROM char baud_value[2][8] = {
 // ===================================================================================
 
 // ===================================================================================
+BYTE   RestartCounter = 0;
 static BYTE         Ticks;
 static BYTE         ledLamps = 200;
 static BYTE         SystemTicks;
@@ -262,6 +264,7 @@ BYTE	uartTrace = 0;
         SM_WAIT_WRITE_CMD,      //  "@w[value][destin] write"
         SM_WAIT_WRITE_DESTIN,   //  "@w[value][destin] write"
         SM_WAIT_WRITE_QUERY,    //  "@t[destin] write test query"
+        SM_WAIT_QUERY,			//  "@Q[data]   data query"
 		SM_WAIT_WRITE_TAPP_ADDR,//  "@u<address><pct>   comando tapparelle a %  
 		SM_WAIT_WRITE_TAPP_POS, //  "@u<address><pct>   comando tapparelle a %
 		SM_WAIT_WRITE_TAPP_SETUP,//  @U<opz>   setup tapparelle a %  
@@ -1057,10 +1060,12 @@ void InputMapping(void)
                           break;
                      case 0xF1:      // lampeggio standard
 						  ledLamps = 30;
+						  RestartCounter++;
 						  sm_command = SM_WAIT_HEADER;
                           break;
                      case 0xF2:      // lampeggio frequente
 						  ledLamps = 10;
+						  RestartCounter++;
 						  sm_command = SM_WAIT_HEADER;
                           break;
                      case 0xF3:      // lampeggio frequentissimo
@@ -1195,7 +1200,8 @@ void InputMapping(void)
                           putcUSBwait('k');
                           putrsUSBwait(VERSION);
                           break;
-                     case 'Q':       // query version
+/*
+					 case 'Q':       // query version
                           sm_command = SM_WAIT_HEADER;
                           putcUSBwait('k');
                           if  (opt.opzioneModo == 'A')
@@ -1203,6 +1209,10 @@ void InputMapping(void)
                               putrsUSBwait(VERSION);
                           }
                           break;
+*/
+					 case 'Q':       // query data
+                          sm_command = SM_WAIT_QUERY;
+						  break;
 
                      case 'D':       // richiede tabella dispositivi
                           sm_command = SM_WAIT_TABSTART;
@@ -1422,6 +1432,11 @@ void InputMapping(void)
 							  putrsUSBwait("\r\n---> uart   OERR: ");
                               itoa(uartOERR,RS_Out_Buffer);
                               putsUSBwait(RS_Out_Buffer);
+
+							  putrsUSBwait("\r\nESP restart counter: ");
+							  itoa((int)RestartCounter,RS_Out_Buffer);
+							  putsUSBwait(RS_Out_Buffer);
+
 //							  uartFERR = 0;
 //							  uartOERR = 0;
 							  if (uartTrace)
@@ -2612,7 +2627,20 @@ void InputMapping(void)
 						putcUSBwait('k');
                  sm_command = SM_WAIT_HEADER;
                  dataTwin = 0;
-                 break;
+                break;
+
+            case SM_WAIT_QUERY:  //  "@Q[data]  internal data query"
+				switch (choice0)
+				{
+					case 'r':      // esp reset nr
+						putcUSBwait(RestartCounter);
+						break;
+					default:
+                        putrsUSBwait(VERSION);
+						break;
+				}
+                sm_command = SM_WAIT_HEADER;
+                break;
         }
     }
 }
