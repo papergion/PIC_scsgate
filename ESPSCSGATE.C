@@ -1,6 +1,11 @@
 #define TITLE    "EspScsGAte"
 
-#define VERSION  "SCS 19.507"
+#ifdef _BOOTMODE
+#define VERSION  "SCS 19.510B"
+#else
+#define VERSION  "SCS 19.510"
+#endif
+// 19.510 adattamenti ver BOOT mode
 // 19.507 contatore di esp restart
 // 19.506 correzione ricezione UART1 su buffer da interrupt
 // 19.505 verifica splafonamenti di memoria...
@@ -363,6 +368,11 @@ BYTE    writeValue;
 BYTE    writeDest;
 BYTE    check;
 static BYTE         autocheck;			// 18.90
+// ==============================================================================================================================
+#ifdef _BOOTMODE
+extern void  _startup(void);  //This is defined in the C runtime
+extern far char  bootMsg[];
+#endif
 // ==============================================================================================================================
 extern	            char rBufferIdxR;	// pointer msgbuffer: prossimo messaggio da scodare (se diverso da idxW) 
 extern volatile far BYTE rBufferIdxW;	// pointer msgbuffer: prossimo messaggio da accodare da parte della routine di interrupt
@@ -760,7 +770,11 @@ void eepromInit(void)
 void InterruptHandlerHigh (void);
 //--------------------------------------------------------------------
 // High priority interrupt vector
+#ifdef _BOOTMODE
+#pragma code InterruptVectorHigh = 0x0408
+#else
 #pragma code InterruptVectorHigh = 0x0008
+#endif
 void InterruptVectorHigh( void )
 {
 #if defined(LED_INT)
@@ -780,7 +794,11 @@ _endasm
 void InterruptHandlerLow (void);
 //--------------------------------------------------------------------
 // Low  priority interrupt vector
+#ifdef _BOOTMODE
+#pragma code InterruptVectorLow = 0x0418
+#else
 #pragma code InterruptVectorLow = 0x0018
+#endif
 void InterruptVectorLow( void )
 {
 //  rInterrupt++;
@@ -1057,15 +1075,14 @@ void InputMapping(void)
                      case 0xF0:      // lampeggio lunghissimo
 						  ledLamps = 200;
 						  sm_command = SM_WAIT_HEADER;
+						  RestartCounter++;
                           break;
                      case 0xF1:      // lampeggio standard
 						  ledLamps = 30;
-						  RestartCounter++;
 						  sm_command = SM_WAIT_HEADER;
                           break;
                      case 0xF2:      // lampeggio frequente
 						  ledLamps = 10;
-						  RestartCounter++;
 						  sm_command = SM_WAIT_HEADER;
                           break;
                      case 0xF3:      // lampeggio frequentissimo
@@ -1191,6 +1208,7 @@ void InputMapping(void)
                           }
                           rBufferIdxW = 0;
                           rBufferIdxR = 0;
+                          uSpikes = 0;
                           sm_command = SM_WAIT_HEADER;
 						  if (ee_avoid_answer == 0)
 								putcUSBwait('k');
@@ -1464,7 +1482,12 @@ void InputMapping(void)
 		                          putsUSBwait(RS_Out_Buffer);
 								break;
 							  }
-                              putrsUSBwait("\r\n");
+#ifdef _BOOTMODE
+                              putrsUSBwait("\r\n-------------- ESP BOOT --------------");
+		                      putsUSBwait(bootMsg);
+#endif
+                              putrsUSBwait("--------------------------------------\r\n");
+
 						  }
                           else
                               putcUSBwait('E');
@@ -3702,6 +3725,7 @@ void main(void)
 
     AppInitialize();
 
+    uSpikes = 0;
     while(1)
     {
 // ===================================================================================
