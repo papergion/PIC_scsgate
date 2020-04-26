@@ -1,10 +1,18 @@
 #define TITLE    "EspScsGAte"
 
 #ifdef _BOOTMODE
-#define VERSION  "SCS 19.510B"
+#define VERSION  "SCS 19.513B"
+#warning .... BOOTMODE ....
 #else
-#define VERSION  "SCS 19.510"
+#define VERSION  "SCS 19.513"
+#warning .... NOT BOOTMODE ....
 #endif
+
+// SCS WARNING - LA PUBBLICAZIONE AVVIENE SOLO SE PRIMA E' PERVENUTO UN /cmd qualunque da mqtt !!!!!!!!!!!!!!!
+// perchè non è ancora avverato:				if (sm_modo == SM_MODO_INTERNO)
+//        aspetta di ricevere:                  if (choice0 == '§')  
+//
+// 19.513 gestione comandi generali tapparelle
 // 19.510 adattamenti ver BOOT mode
 // 19.507 contatore di esp restart
 // 19.506 correzione ricezione UART1 su buffer da interrupt
@@ -447,6 +455,7 @@ void Write_eep_array(BYTE *Data, int Address, char Len);
 void Write_config(BYTE mode);
 void Read_tapparelle(void);
 void Write_tapparelle(void);
+void CmdTotaleTapparelle(void);
 
 static void InitializeBoard(void);
 void TickInit(void);
@@ -1958,6 +1967,7 @@ void InputMapping(void)
 				  }
                  break;
 
+			case SM_WAIT_WRITE_TAPP_SETUP:	// setup tapparelle a %  @U<cmd>   0=no   1=raccogli i dati   2=online   9=ripulisci
 				 //   '0':	close % mode
 				 //   '1':  data collection
 				 //   '2':  consolida e apre (se sono state ABBASSATE e alzate tapparelle
@@ -1970,7 +1980,6 @@ void InputMapping(void)
 				 //   '9':  pulisce tutta la tabella
 				 //   'c':  clear posizioni
 
-			case SM_WAIT_WRITE_TAPP_SETUP:	// setup tapparelle a %  @u<cmd>   0=no   1=raccogli i dati   2=online   9=ripulisci
                  switch (choice0)
                  {
 				 case '2':  // consolida e apre (se sono state ABBASSATE e alzate tapparelle
@@ -2147,40 +2156,46 @@ void InputMapping(void)
 						   devc[n].all = m;
                            if (m == 9)
 						   {
-							if (opt.tapparelle_pct == 0)
-							{
-								opt.tapparelle_pct = 3;
-								Write_config(0); // scrive sempre
-							}
-							b = 0;
-							while (b < maxtapp)
-							{
-								if (devicetappa[b].device == n)
+								if (opt.tapparelle_pct == 0)
 								{
-									if (devicetappa[b].maxposition != wv.Val)
-									{
-										devicetappa[b].maxposition = wv.Val;
-								//		Write_tapparelle();
-										Write_eep_array(&devicetappa[b], (b*3)+EE_TAPPA_SETUP+1, 3);
-										DelayMs(10);
-									}
-									putcUSBwait('k');
-									b = 250;
+									opt.tapparelle_pct = 3;
+									Write_config(0); // scrive sempre
 								}
-								b++;
-							}
-                            if (b == maxtapp)
-							{
-								maxtapp++;
-								devicetappa[b].device = n;
-								devicetappa[b].maxposition = wv.Val;
-							//	Write_tapparelle();
-								Write_b_eep (EE_TAPPA_SETUP, maxtapp);
-								Busy_eep ();
-								Write_eep_array(&devicetappa[b], (b*3)+EE_TAPPA_SETUP+1, 3);
-								DelayMs(10);
-								putcUSBwait('k');
-							}
+								b = 0;
+								while (b < maxtapp)
+								{
+									if (devicetappa[b].device == n)
+									{
+										if (devicetappa[b].maxposition != wv.Val)
+										{
+											devicetappa[b].maxposition = wv.Val;
+									//		Write_tapparelle();
+											Write_eep_array(&devicetappa[b], (b*3)+EE_TAPPA_SETUP+1, 3);
+											DelayMs(10);
+										}
+										putcUSBwait('k');
+										b = 250;
+									}
+									b++;
+								}
+								if (b == maxtapp)
+								{
+									maxtapp++;
+									devicetappa[b].device = n;
+									devicetappa[b].maxposition = wv.Val;
+								//	Write_tapparelle();
+									Write_b_eep (EE_TAPPA_SETUP, maxtapp);
+									Busy_eep ();
+									Write_eep_array(&devicetappa[b], (b*3)+EE_TAPPA_SETUP+1, 3);
+
+									tapparella[b].direction.Val = 0x80;	//      [] direzione (0=ferma  9=giu  8=su )
+									tapparella[b].position = 0;		//      [] posizione attuale (in unità da 0,1 secondi)
+									tapparella[b].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+									tapparella[b].timeout = 0;		//      [] timeout attuale (in unita da 0,1 secondi)
+
+									DelayMs(10);
+									putcUSBwait('k');
+								}
 						   } // m == 9
 						}
 					 }
@@ -2921,6 +2936,48 @@ BYTE check = 0;
 
 
 // ===================================================================================
+void CmdTotaleTapparelle(void)
+{
+	ixTapp = 0;
+	switch (scsMessageRx[rBufferIdxR][5])
+	{
+// -----------------------------aggiorna anche tabella tapparelle-----------------------------
+	case 0x08:					// alza
+		while (ixTapp < maxtapp)
+		{
+			if (tapparella[ixTapp].direction.half.LS == 0)
+			{
+				tapparella[ixTapp].direction.Val = UP; // pubblicazione immediata
+				tapparella[ixTapp].timeout = 0;
+			}
+			ixTapp++;
+		}
+		break;
+
+	case 0x09:					// abbassa
+		while (ixTapp < maxtapp)
+		{
+			if (tapparella[ixTapp].direction.half.LS == 0)
+			{
+				tapparella[ixTapp].direction.Val = DOWN; // pubblicazione immediata
+				tapparella[ixTapp].timeout = 0;
+			}
+			ixTapp++;
+		}
+		break;
+
+	case 0x0A:                  // stop
+		while (ixTapp < maxtapp)
+		{
+			tapparella[ixTapp].direction.half.LS = 0;
+			tapparella[ixTapp].timeout = 0;
+			tapparella[ixTapp].request = 0xFFFF;
+			ixTapp++;
+		}
+		break;
+// -------------------------------------------------------------------------------------------
+	} // switch  scsMessageRx[rBufferIdxR][5]
+}
 
 // ******************************************************************************/
 // * output analyze and mapping                                                 */
@@ -2960,8 +3017,16 @@ BYTE increment;
 					else
 					{
 						didx = scsMessageRx[rBufferIdxR][3];
+
 						if (scsMessageRx[rBufferIdxR][2] == 0xB3)  // gruppo/scenario
 							didx = 0;
+						else
+						if (scsMessageRx[rBufferIdxR][2] == 0xB1)  // tutti
+						{
+							didx = 0xB1;
+							if (opt.tapparelle_pct)
+								CmdTotaleTapparelle();
+						}
 					}
 
 					if ((didx > 0) && (didx < DEV_NR)) 
