@@ -1,10 +1,10 @@
 #define TITLE    "EspScsGAte"
 
 #ifdef _BOOTMODE
-#define VERSION  "SCS 19.513B"
+#define VERSION  "SCS 19.514B"
 #warning .... BOOTMODE ....
 #else
-#define VERSION  "SCS 19.513"
+#define VERSION  "SCS 19.514"
 #warning .... NOT BOOTMODE ....
 #endif
 
@@ -12,6 +12,7 @@
 // perchè non è ancora avverato:				if (sm_modo == SM_MODO_INTERNO)
 //        aspetta di ricevere:                  if (choice0 == '§')  
 //
+// 19.514 correzione comandi generali tapparelle - tapparella generale B1
 // 19.513 gestione comandi generali tapparelle
 // 19.510 adattamenti ver BOOT mode
 // 19.507 contatore di esp restart
@@ -455,7 +456,7 @@ void Write_eep_array(BYTE *Data, int Address, char Len);
 void Write_config(BYTE mode);
 void Read_tapparelle(void);
 void Write_tapparelle(void);
-void CmdTotaleTapparelle(void);
+void CmdTotaleTapparelle(BYTE comando);
 
 static void InitializeBoard(void);
 void TickInit(void);
@@ -1915,6 +1916,14 @@ void InputMapping(void)
 						 dataByte.data[dataLength++] = check;
 						 dataByte.data[dataLength++] = 0xA3;
 						 queueWrite(dataLength);
+
+// test comandi globali 0xB1
+						if ((dataByte.data[1] == 0xB1)  // cmd globale
+						 && (dataByte.data[4] >= 0x08)  // cmd tapparelle
+						 && (dataByte.data[4] <= 0x0A)
+						 && (opt.tapparelle_pct))       // ci sono tapparelle a percentuale 
+								CmdTotaleTapparelle(dataByte.data[4]);
+
 						  if (ee_avoid_answer == 0)
 								putcUSBwait('k');
 						 sm_command = SM_WAIT_HEADER;
@@ -2936,10 +2945,10 @@ BYTE check = 0;
 
 
 // ===================================================================================
-void CmdTotaleTapparelle(void)
+void CmdTotaleTapparelle(BYTE comando)
 {
 	ixTapp = 0;
-	switch (scsMessageRx[rBufferIdxR][5])
+	switch (comando)
 	{
 // -----------------------------aggiorna anche tabella tapparelle-----------------------------
 	case 0x08:					// alza
@@ -2976,7 +2985,7 @@ void CmdTotaleTapparelle(void)
 		}
 		break;
 // -------------------------------------------------------------------------------------------
-	} // switch  scsMessageRx[rBufferIdxR][5]
+	} // switch  comando
 }
 
 // ******************************************************************************/
@@ -3025,7 +3034,7 @@ BYTE increment;
 						{
 							didx = 0xB1;
 							if (opt.tapparelle_pct)
-								CmdTotaleTapparelle();
+								CmdTotaleTapparelle(scsMessageRx[rBufferIdxR][5]);
 						}
 					}
 
