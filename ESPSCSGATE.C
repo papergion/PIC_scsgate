@@ -1,10 +1,14 @@
 #define TITLE    "EspScsGAte"
 
+#define ESP8285
+//#define ESP8266
+
+
 #ifdef _BOOTMODE
-#define VERSION  "SCS 19.514B"
+#define VERSION  "SCS 19.520B"
 #warning .... BOOTMODE ....
 #else
-#define VERSION  "SCS 19.514"
+#define VERSION  "SCS 19.520"
 #warning .... NOT BOOTMODE ....
 #endif
 
@@ -121,7 +125,12 @@ void getUART(void);
 
 #include "p18cxxx.h"
 #include "GenericTypeDefs.h"
+#ifdef ESP8266
 #include "ESPSCSGATE.h"
+#endif
+#ifdef ESP8285
+#include "ESPSCSGATE_85.h"
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include "Compiler.h"
@@ -649,6 +658,24 @@ static void InitializeBoard(void)
     CVRCON = 0b10000000;     // Vref gen enabled, internal only, Vdd-Vss
     CVRCONbits.CVR = opt.Vref;      // ref value from 0 to 31 - ogni step 5/31 = 0,15Volt
 #endif
+
+#if defined(USE_J1)
+    J1_TRIS = 0;  // OUTPUT
+    J1_OUT  = 1;  // out 1
+	DelayMs(10);
+	if (J1_IN == 1)			// no jumper - client mode
+	{
+		putcUSBwait('c');
+		DelayMs(200);
+	}
+	else
+	{
+		putcUSBwait('a');	// jumper - AP mode
+	    LED_SYS= 0;
+	}
+    J1_TRIS = 1;  // INPUT
+#endif
+
 }
 
 // ===================================================================================
