@@ -8,7 +8,7 @@ dir_src=
 dir_bin=.\BIN
 dir_tmp=.\OBJ
 dir_sin=
-dir_inc=.;H:\Microchip Solutions\HOME1939;H:\Microchip Solutions\Microchip536\Include
+dir_inc=.;H:\Microchip Solutions\LIBRARY\BASE;H:\Microchip Solutions\Microchip536\Include
 dir_lib=C:\Program Files (x86)\Microchip\mplabc18\v3.46\lib
 dir_lkr=
 [CAT_FILTERS]
@@ -34,6 +34,8 @@ file_006=.
 file_007=.
 file_008=.
 file_009=.
+file_010=.
+file_011=.
 [GENERATED_FILES]
 file_000=no
 file_001=no
@@ -45,6 +47,8 @@ file_006=no
 file_007=no
 file_008=no
 file_009=no
+file_010=no
+file_011=no
 [OTHER_FILES]
 file_000=no
 file_001=no
@@ -56,24 +60,28 @@ file_006=no
 file_007=no
 file_008=no
 file_009=no
+file_010=no
+file_011=no
 [FILE_INFO]
 file_000=ESPSCSGATE.C
-file_001=F:\HOME1939\DELAY.c
-file_002=H:\Microchip Solutions\LIBRARY\SCSINTRP\SCS_UART.ASM
-file_003=H:\Microchip Solutions\HOME1939\CANREPRO_232.ASM
-file_004=ESPSCSGATE.H
-file_005=SCSINTRP.INC
-file_006=F:\HOME1939\GENERICTYPEDEFS.H
-file_007=canrepro.inc
-file_008=..\..\..\HOME1939\Delay.h
-file_009=F:\HOME1939\18F26K80_B.LKR
+file_001=H:\Microchip Solutions\LIBRARY\BASE\DELAY.c
+file_002=H:\Microchip Solutions\LIBRARY\BASE\CANREPRO_232_EVO.ASM
+file_003=H:\Microchip Solutions\LIBRARY\SCSINTRP\SCS_UART.ASM
+file_004=canrepro.inc
+file_005=H:\Microchip Solutions\LIBRARY\BASE\DELAY.H
+file_006=H:\Microchip Solutions\LIBRARY\BASE\GENERICTYPEDEFS.H
+file_007=SCS_8266.INC
+file_008=SCS_8285.INC
+file_009=ESPSCSGATE_8266.H
+file_010=ESPSCSGATE_8285.H
+file_011=H:\Microchip Solutions\LIBRARY\BASE\18F26K80_B.LKR
 [SUITE_INFO]
 suite_guid={5B7D72DD-9861-47BD-9F60-2BE967BF8416}
 suite_state=
 [TOOL_SETTINGS]
-TS{DD2213A8-6310-47B1-8376-9430CDFC013F}=
+TS{DD2213A8-6310-47B1-8376-9430CDFC013F}=/dESP8266
 TS{BFD27FBA-4A02-4C0E-A5E5-B812F3E7707C}=/m"$(BINDIR_)$(TARGETBASE).map" /w /o"$(BINDIR_)$(TARGETBASE).cof"
-TS{C2AF05E7-1416-4625-923D-E114DB6E2B96}=-Ou- -Ot- -Ob- -Op- -Or- -Od- -Opa-
+TS{C2AF05E7-1416-4625-923D-E114DB6E2B96}=-D_ESP8266 -Ou- -Ot- -Ob- -Op- -Or- -Od- -Opa-
 TS{ADE93A55-C7C7-4D4D-A4BA-59305F7D0391}=
 [INSTRUMENTED_TRACE]
 enable=0

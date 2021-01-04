@@ -2,7 +2,7 @@
 
 // definire _ESP8285  oppure _ESP8266  oppure _RASPBERRY_7 o RASPBERRY_8
 
-#define VERSION1 "522"
+#define VERSION1 "523"
 
 // ----------------------------------------------------
 
@@ -55,10 +55,10 @@
 #define IMMEDIATE_ANSWER        // ricava lo stato anche dal comando (non solo dalla risposta di stato)
 #define DEV_NR		210	        // numero elementi tabella devices (0xD2)
 
+#ifdef	UART1_CALL
 #define inUART()   getUART()
-
 void getUART(void);
-
+#endif
 //		i comandi interni hanno un particolare formato:
 //          § data  (§ sostituisce @)
 //                        § D <address>    per richiesta censimento dispositivi
@@ -207,16 +207,20 @@ char RS_Out_Buffer[120];
 // ===================================================================================
 typedef union _DEVICE   { // 0xFF:empty
   struct {
-	  unsigned char device : 4;	//bit 0-3 - 0xF:empty   1:switch   3:dimmer   8:tapparella   9:tapparella pct   0E:allarme
-	  unsigned char fill1  : 3;	//bit 4-6 - non usato
-	  unsigned char renew  : 1;	//bit 7   - 1:stato sconosciuto
+	  unsigned char devType : 8;	// 0xFF:empty     
+								// 1:switch       3:dimmer   
+								// 8:tapparella   9:tapparella pct   
+								// 0B generic    0C generic 
+								// 0E:allarme	 0F termostato
+//	  unsigned char fill1  : 3;	//bit 4-6 - non usato
+//	  unsigned char renew  : 1;	//bit 7   - 1:stato sconosciuto
         };
-  unsigned char all;
-  BYTE_VAL      Bdev;
+//  unsigned char all;
+//  BYTE_VAL      Bdev;
 } DEVICE;
 // ===================================================================================
 #pragma udata TABDEV
-DEVICE devc[DEV_NR]; // 0xFF:empty  01:switch  03:dimmer  08:tapparella  09:tapp%  0E:allarme
+DEVICE devc[DEV_NR]; // 0xFF:empty  01:switch  03:dimmer  08:tapparella  09:tapp%  0E:allarme   0F:termostato
 BYTE didx;
 BYTE dlen;
 // ===================================================================================
@@ -1038,7 +1042,9 @@ void AnswerMsgInternal(void)
 BYTE s,n,len;
 // <top> <destin> <source> <tpu> <data> <chk>
 //  --     ====     ====    ====  ====   --    --
-//  A8      10       dd      12    00    cc    A3
+//  A8      10       ss      12    dd    cc    A3
+
+// [0xF5] [y] 10 ss 12 dd
 
     len = scsMessageRx[rBufferIdxR][0];	// 7
     if (len > 15) len = 15;
@@ -1253,13 +1259,13 @@ void InputMapping(void)
 							  while (n < DEV_NR)
 							  {
 //								  if ((devc[n].device != 0) && (devc[n].device != 0xF))
-								  if (devc[n].all != 0xFF)
+								  if (devc[n].devType != 0xFF)
 								  {
 		                              putrsUSBwait("\r\n");
 									  puthexUSBwait(n);
 									  putcUSBwait(' ');
-//									  puthexUSBwait(devc[n].all);
-									  puthexUSBwait(devc[n].device);
+//									  puthexUSBwait(devc[n].devType);
+									  puthexUSBwait(devc[n.]devType);
 								  }
 								  n++;
 							  }
@@ -2068,7 +2074,7 @@ void InputMapping(void)
 							if (devicetappa[m].maxposition < tapparella[m].position)
 								devicetappa[m].maxposition = tapparella[m].position;
 							didx = devicetappa[m].device;
-							devc[didx].all = 9;
+							devc[didx].devType = 9;
 							if (devicetappa[m].maxposition > 0)
 								n++;
                             tapparella[m].direction.Val = 0x80;
@@ -2229,7 +2235,7 @@ void InputMapping(void)
 						if (wv.Val > 1200) wv.Val = 1200;
 						if ((n > 0) && (n < DEV_NR) && (m > 0) && (m < 32))
 						{
-						   devc[n].all = m;
+						   devc[n].devType = m;
                            if (m == 9)
 						   {
 								if (opt.tapparelle_pct == 0)
@@ -2628,7 +2634,7 @@ void InputMapping(void)
 					didx = 0;
 					while (didx < DEV_NR)
 					{
-						devc[didx++].all = 0xFF;
+						devc[didx++].devType = 0xFF;
 					}
 // predisporre eventuali tapparelle
 					m = 0;
@@ -2637,7 +2643,7 @@ void InputMapping(void)
 						if ((devicetappa[m].device > 0) && (devicetappa[m].device < DEV_NR))
 						{
 							didx = devicetappa[m].device;
-							devc[didx].all = 9;
+							devc[didx].devType = 9;
 						}
 						m++;
 					}
@@ -2645,7 +2651,7 @@ void InputMapping(void)
 				 }
 				 else
 				 {
-					 while ((devc[didx].all == 0xFF) && (didx < DEV_NR)) 
+					 while ((devc[didx].devType == 0xFF) && (didx < DEV_NR)) 
 					 {
 						 didx++;
 					 }
@@ -2657,7 +2663,7 @@ void InputMapping(void)
 	                putcUSBwait('D');
 					putcUSBwait(didx);
 					if (didx < DEV_NR)
-	                     putcUSBwait(devc[didx].device);
+	                     putcUSBwait(devc[didx.]devType);
 					else
 	                     putcUSBwait(0xFF);
 				}
@@ -2667,7 +2673,7 @@ void InputMapping(void)
 					putcUSBwait('D');
 					putcUSBwait(didx);
 					if (didx < DEV_NR)
-	                     putcUSBwait(devc[didx].device);
+	                     putcUSBwait(devc[didx.]devType);
 					else
 	                     putcUSBwait(0xFF);
 				}
@@ -2676,7 +2682,7 @@ void InputMapping(void)
 					putcUSBwait('D');
 					puthexUSBwait(didx);
 					if (didx < DEV_NR)
-						puthexUSBwait(devc[didx].all);
+						puthexUSBwait(devc[didx].devType);
 					 else
 						puthexUSBwait(0xFF);
 				}
@@ -3111,16 +3117,16 @@ BYTE increment;
 						{
 						case 0:
 						case 0x01:
-							if (devc[didx].all == 0xFF)
-								devc[didx].all = 1;
+							if (devc[didx].devType == 0xFF)
+								devc[didx].devType = 1;
 							break;
 						case 0x03:
 						case 0x04:
-							devc[didx].all = 3;
+							devc[didx].devType = 3;
 							break;
 // -----------------------------aggiorna anche tabella tapparelle-----------------------------
 						case 0x08:					// alza
-							if (devc[didx].device != 9) devc[didx].all = 8;
+							if (devc[didx.]devType != 9) devc[didx].devType = 8;
 							if (opt.tapparelle_pct)
 							{
 								ixTapp = 0;
@@ -3143,7 +3149,7 @@ BYTE increment;
 							break;
 
 						case 0x09:					// abbassa
-							if (devc[didx].device != 9) devc[didx].all = 8;
+							if (devc[didx.]devType != 9) devc[didx].devType = 8;
 							f = 0;
 							if (opt.tapparelle_pct)
 							{
@@ -3177,7 +3183,7 @@ BYTE increment;
 							break;
 
 						case 0x0A:                  // stop
-							if (devc[didx].device != 9) devc[didx].all = 8;
+							if (devc[didx.]devType != 9) devc[didx].devType = 8;
 							if (opt.tapparelle_pct)
 							{
 								ixTapp = 0;
@@ -3201,12 +3207,23 @@ BYTE increment;
 // -------------------------------------------------------------------------------------------
 						default:
 							if ((scsMessageRx[rBufferIdxR][5] & 0x0F) == 0x0D)
-								devc[didx].all = 3;
+								devc[didx].devType = 3;
 							break;
 
 						} // switch  scsMessageRx[rBufferIdxR][5]
 					} // 	if ((didx > 0) && (didx < DEV_NR))
 					break;				
+
+				  case 0x30:	// termostati
+					if (scsMessageRx[rBufferIdxR][2] == 0xB4)
+					{
+						didx = scsMessageRx[rBufferIdxR][3];     // log 0xC1
+						if ((didx > 0) && (didx < 0x0F)) 
+						{
+							devc[didx].devType = 0x0F;
+						}
+					}
+				    break;
 
 				  case 0x43:	// stato allarme
 				  case 0x44:	// stato allarme
@@ -3220,7 +3237,7 @@ BYTE increment;
 					}
 					if ((didx > 0) && (didx < DEV_NR)) 
 					{
-						devc[didx].all = 0x0E;
+						devc[didx].devType = 0x0E;
 					}
 					break;
 
@@ -3441,7 +3458,7 @@ BYTE increment;
 }
 
 // ==========================get  USB via USART======================================
-#ifdef UART1_BUFFER
+#ifdef	UART1_CALL
 // ----------------------------------------------------------------------
 void getUART(void)
 {
@@ -3819,7 +3836,7 @@ void main(void)
 	didx = 0;
 	while (didx < DEV_NR)
 	{
-		devc[didx++].all = 0xFF;
+		devc[didx++].devType = 0xFF;
 	}
 
 
@@ -3838,8 +3855,8 @@ void main(void)
 	{
 		t = devicetappa[i].device;
 		if (t < DEV_NR)
-			devc[t].all = 0x09;
-//			devc[t].all = 0x89;
+			devc[t].devType = 0x09;
+//			devc[t].devType = 0x89;
 		i++;
 	}
 
