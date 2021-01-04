@@ -1,16 +1,36 @@
 #define TITLE    "EspScsGAte"
 
-#define ESP8285
-//#define ESP8266
+// definire _ESP8285  oppure _ESP8266  oppure _RASPBERRY_7 o RASPBERRY_8
 
+#define VERSION1 "522"
+
+// ----------------------------------------------------
+
+#ifdef _ESP8285
+#define VERSION0  "SCS 85."
+#else
+#ifdef _ESP8266
+#define VERSION0  "SCS 66."
+#else
+#ifdef _RASPBERRY_7
+#define VERSION0  "SCS 70."
+#else
+#ifdef _RASPBERRY_8
+#define VERSION0  "SCS 80."
+#endif
+#endif
+#endif
+#endif
 
 #ifdef _BOOTMODE
-#define VERSION  "SCS 19.520B"
+#define VERSION2 "B"
 #warning .... BOOTMODE ....
 #else
-#define VERSION  "SCS 19.520"
+#define VERSION2 " "
 #warning .... NOT BOOTMODE ....
 #endif
+
+#define VERSION  VERSION0 VERSION1 VERSION2
 
 // SCS WARNING - LA PUBBLICAZIONE AVVIENE SOLO SE PRIMA E' PERVENUTO UN /cmd qualunque da mqtt !!!!!!!!!!!!!!!
 // perchè non è ancora avverato:				if (sm_modo == SM_MODO_INTERNO)
@@ -125,17 +145,34 @@ void getUART(void);
 
 #include "p18cxxx.h"
 #include "GenericTypeDefs.h"
-#ifdef ESP8266
-#include "ESPSCSGATE.h"
+
+#ifdef _ESP8266
+#include "ESPSCSGATE_8266.h"
+
+#else
+#ifdef _ESP8285
+#include "ESPSCSGATE_8285.h"
+
+#else
+#ifdef _RASPBERRY_7
+#include "ESPSCSGATE_RASPY7.h"
+
+#else
+#ifdef _RASPBERRY_8
+#include "ESPSCSGATE_RASPY8.h"
+
+#else
+#error 999 DEFINIRE macro _ESP8266 oppure _ESP8285 oppure _RASPBERRY_7 oppure _RASPBERRY_8
 #endif
-#ifdef ESP8285
-#include "ESPSCSGATE_85.h"
 #endif
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 #include "Compiler.h"
 #include "Delay.h"
 #include "eep.h"
+
 #if defined(USE_UART2)
 #warning ATTENZIONE - USA UART2 per DEBUG ---------------<<<<<<<<<<<<<<<<<<<<<
 #endif
@@ -653,20 +690,22 @@ static void InitializeBoard(void)
     PIR4bits.CMP1IF  = 0;    // clear interrupt
     PIE4bits.CMP1IE  = 0;    // no    interrupt
     IPR4bits.CMP1IP  = 1;    // high-priority interrupt
-#if (( HW == 141113 ) || ( HW == 160318))
+//#if (( HW == 141113 ) || ( HW == 160318) || ( HW == 20201212))
     CM1CONbits.CREF  = 1;    // non inverting input connected to internal cVref
     CVRCON = 0b10000000;     // Vref gen enabled, internal only, Vdd-Vss
     CVRCONbits.CVR = opt.Vref;      // ref value from 0 to 31 - ogni step 5/31 = 0,15Volt
-#endif
+//#endif
 
 #if defined(USE_J1)
     J1_TRIS = 0;  // OUTPUT
     J1_OUT  = 1;  // out 1
 	DelayMs(10);
+	uart_in_use = 1;
 	if (J1_IN == 1)			// no jumper - client mode
 	{
 		putcUSBwait('c');
 		DelayMs(200);
+	    LED_SYS= 1;
 	}
 	else
 	{
@@ -674,8 +713,8 @@ static void InitializeBoard(void)
 	    LED_SYS= 0;
 	}
     J1_TRIS = 1;  // INPUT
+	uart_in_use = 2;
 #endif
-
 }
 
 // ===================================================================================
@@ -1488,10 +1527,11 @@ void InputMapping(void)
                               itoa(uartOERR,RS_Out_Buffer);
                               putsUSBwait(RS_Out_Buffer);
 
-							  putrsUSBwait("\r\nESP restart counter: ");
+#ifdef _ESP8285 || _ESP8266
+							  putrsUSBwait("\r\nESP restart counter: "); // esp8266  esp8285
 							  itoa((int)RestartCounter,RS_Out_Buffer);
 							  putsUSBwait(RS_Out_Buffer);
-
+#endif
 //							  uartFERR = 0;
 //							  uartOERR = 0;
 							  if (uartTrace)
@@ -1578,7 +1618,7 @@ void InputMapping(void)
                           sm_command = SM_WAIT_HEADER;
                           break;
 
-#if (( HW == 141113 ) || (HW == 160318))
+//#if (( HW == 141113 ) || (HW == 160318) || (HW == 20201212))
                      case 'I':       // UPDATE internal Vref
                           if  (opt.opzioneModo == 'A')
                           {
@@ -1603,7 +1643,7 @@ void InputMapping(void)
                               putcUSBwait('E');
                           sm_command = SM_WAIT_HEADER;
                           break;
-#endif
+//#endif
 
 // ----------------------- fine opzioni di test --------------------------------------
                      case 'p':       // rx msg fasullo

@@ -12,8 +12,9 @@
 #define SCS_TIMEOUT_BYTE   936       ;     uS timeout END OF BYTE (104*9)
 #define SCS_TIMEOUT_STREAM 260       ;     uS timeout END OF MESSAGE (oltre la fine byte) FF - 260/4 + 1 = 191
 #define SCS_INPUT          CMSTAT,CMP1OUT
-#define SCS_OUT            LATC,RC4
-#define SCS_LED            LATA,RA5
+#define SCS_OUT            LATC,RC4   ; raspberry_8 (optical)
+
+; #define SCS_LED            LATA,RA5
 ; #define UART_LED           LATA,RA1
 ; #define SYNCHWOUT          LATB,RB6
 ; #define SYNCHWERR          LATB,RB6
