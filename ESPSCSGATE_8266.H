@@ -34,8 +34,8 @@ ricalcolati per alimentatore knx
 ;                  Vcap  --------|6             rb2 23|--------   nc
 ;                        --------|7  ra5        rb1 22|----<---   C1inB
 ;                      - --------|8  Vss        rb0 21|--------   
-;                 xtal   --------|9  ra7        Vdd 20|-------- +
-;                 xtal   --------|10 ra6        Vss 19|-------- -
+;                        --------|9  ra7        Vdd 20|-------- +
+;                        --------|10 ra6        Vss 19|-------- -
 ;           join uart RX --------|11 rc0        rc7 18|---<----   uart1 RX   from esp8266 tx
 ;           join uart TX --------|12 rc1        rc6 17|--->----   uart1 TX     to esp8266 rx
 ;                        --------|13 rc2        rc5 16|--------   join
@@ -43,7 +43,7 @@ ricalcolati per alimentatore knx
 ;                                +--------------------+
 ; -------------------------------------------------------------------------*/
 
-#if (HW == 160318)
+//#if (HW == 160318)
   #define INIT_TRISA  (0b10001000) //
   #define INIT_TRISB  (0b10000010) // 
   #define INIT_TRISC  (0b10100011) //
@@ -54,7 +54,7 @@ ricalcolati per alimentatore knx
   #define USE_UART1    // per colloquio con ESP
 //  #define USE_UART2    // per colloquio con USB
 // ===================================================================================
-#endif
+//#endif
 
   #define INIT_PORTA  (0b00000000) //
   #define INIT_PORTB  (0b01000000) //

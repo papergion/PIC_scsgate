@@ -34,8 +34,6 @@ file_006=.
 file_007=.
 file_008=.
 file_009=.
-file_010=.
-file_011=.
 [GENERATED_FILES]
 file_000=no
 file_001=no
@@ -47,8 +45,6 @@ file_006=no
 file_007=no
 file_008=no
 file_009=no
-file_010=no
-file_011=no
 [OTHER_FILES]
 file_000=no
 file_001=no
@@ -60,8 +56,6 @@ file_006=no
 file_007=no
 file_008=no
 file_009=no
-file_010=no
-file_011=no
 [FILE_INFO]
 file_000=ESPSCSGATE.C
 file_001=H:\Microchip Solutions\LIBRARY\BASE\DELAY.c
@@ -70,11 +64,9 @@ file_003=H:\Microchip Solutions\LIBRARY\SCSINTRP\SCS_UART.ASM
 file_004=canrepro.inc
 file_005=H:\Microchip Solutions\LIBRARY\BASE\DELAY.H
 file_006=H:\Microchip Solutions\LIBRARY\BASE\GENERICTYPEDEFS.H
-file_007=SCS_8266.INC
-file_008=SCS_8285.INC
-file_009=ESPSCSGATE_8266.H
-file_010=ESPSCSGATE_8285.H
-file_011=H:\Microchip Solutions\LIBRARY\BASE\18F26K80_B.LKR
+file_007=SCS_8285.INC
+file_008=ESPSCSGATE_8285.H
+file_009=H:\Microchip Solutions\LIBRARY\BASE\18F26K80_B.LKR
 [SUITE_INFO]
 suite_guid={5B7D72DD-9861-47BD-9F60-2BE967BF8416}
 suite_state=
