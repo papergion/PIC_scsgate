@@ -2,7 +2,7 @@
 
 // definire _ESP8285  oppure _ESP8266  oppure _RASPBERRY_7 o RASPBERRY_8
 
-#define VERSION1 "524"
+#define VERSION1 "525"
 
 // ----------------------------------------------------
 
@@ -986,7 +986,7 @@ BYTE s,n,l;
         {
             l = scsMessageRx[rBufferIdxR][0];
             if (l > 15) l = 15;
-			if (opt.abbrevia.bits.b0)	// abbreviazione, evitare PFX, CHK, SFX
+			if ((opt.abbrevia.bits.b0) && (l>3))	// abbreviazione, evitare PFX, CHK, SFX
 			{
 				s = 2;		// start
 				l -= 3;	    // length
@@ -1017,7 +1017,7 @@ BYTE s,n,l;
         {
             l = scsMessageRx[rBufferIdxR][0];	// 7
             if (l > 15) l = 15;
-			if (opt.abbrevia.bits.b0)	// abbreviazione, evitare PFX, CHK, SFX
+			if ((opt.abbrevia.bits.b0) && (l>3))	// abbreviazione, evitare PFX, CHK, SFX
 			{
 				s = 2;			// start ptr
 				l -= 3;	        // length
@@ -1051,8 +1051,14 @@ BYTE s,n,len;
 
     len = scsMessageRx[rBufferIdxR][0];	// 7
     if (len > 15) len = 15;
-	s = 2;			// start ptr
-	len -= 3;	        // length
+
+	if ((opt.abbrevia.bits.b0) && (len>3))	// abbreviazione, evitare PFX, CHK, SFX
+	{
+		s = 2;			// start ptr
+		len -= 3;	        // length
+	}
+	else
+		s = 1;
 
 	putcUSBwait(0xF0+len+1); // internal answer, + length + 1 = 0xF5
 	putcUSBwait('y');	// stamp
