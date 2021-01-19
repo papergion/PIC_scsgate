@@ -2,7 +2,7 @@
 
 // definire _ESP8285  oppure _ESP8266  oppure _RASPBERRY_7 o RASPBERRY_8
 
-#define VERSION1 "523"
+#define VERSION1 "524"
 
 // ----------------------------------------------------
 
@@ -32,6 +32,7 @@
 
 #define VERSION  VERSION0 VERSION1 VERSION2
 
+// 19.524 corretto errore di memoria quando @Y1 senza @F3 - auto set init vref
 // SCS WARNING - LA PUBBLICAZIONE AVVIENE SOLO SE PRIMA E' PERVENUTO UN /cmd qualunque da mqtt !!!!!!!!!!!!!!!
 // perchè non è ancora avverato:				if (sm_modo == SM_MODO_INTERNO)
 //        aspetta di ricevere:                  if (choice0 == '§')  
@@ -163,6 +164,7 @@ void getUART(void);
 
 #else
 #error 999 DEFINIRE macro _ESP8266 oppure _ESP8285 oppure _RASPBERRY_7 oppure _RASPBERRY_8
+#endif
 #endif
 #endif
 #endif
@@ -845,6 +847,7 @@ void eepromInit(void)
 		filterByte_B = 0;			// 4.4  gestisce il byte filtering B
 		filterValue_B = 0;			// 4.4  gestisce il byte filtering B
 //		Reset();
+
 }
 //--------------------------------------------------------------------
 void InterruptHandlerHigh (void);
@@ -941,7 +944,7 @@ BYTE s, m, n, l;
     l = scsMessageRx[rBufferIdxR][0];
     if (l > 15) l = 15;
 
-	if (opt.abbrevia.bits.b0)	// abbreviazione, evitare PFX, CHK, SFX
+	if ((opt.abbrevia.bits.b0) && (l>3))	// abbreviazione, evitare PFX, CHK, SFX
 	{
 		s = 2;		// start
 		l -= 3;		// length
@@ -1265,7 +1268,7 @@ void InputMapping(void)
 									  puthexUSBwait(n);
 									  putcUSBwait(' ');
 //									  puthexUSBwait(devc[n].devType);
-									  puthexUSBwait(devc[n.]devType);
+									  puthexUSBwait(devc[n].devType);
 								  }
 								  n++;
 							  }
@@ -1533,7 +1536,7 @@ void InputMapping(void)
                               itoa(uartOERR,RS_Out_Buffer);
                               putsUSBwait(RS_Out_Buffer);
 
-#ifdef _ESP8285 || _ESP8266
+#if defined(_ESP8285) || defined(_ESP8266)
 							  putrsUSBwait("\r\nESP restart counter: "); // esp8266  esp8285
 							  itoa((int)RestartCounter,RS_Out_Buffer);
 							  putsUSBwait(RS_Out_Buffer);
@@ -2663,7 +2666,7 @@ void InputMapping(void)
 	                putcUSBwait('D');
 					putcUSBwait(didx);
 					if (didx < DEV_NR)
-	                     putcUSBwait(devc[didx.]devType);
+	                     putcUSBwait(devc[didx].devType);
 					else
 	                     putcUSBwait(0xFF);
 				}
@@ -2673,7 +2676,7 @@ void InputMapping(void)
 					putcUSBwait('D');
 					putcUSBwait(didx);
 					if (didx < DEV_NR)
-	                     putcUSBwait(devc[didx.]devType);
+	                     putcUSBwait(devc[didx].devType);
 					else
 	                     putcUSBwait(0xFF);
 				}
@@ -3126,7 +3129,7 @@ BYTE increment;
 							break;
 // -----------------------------aggiorna anche tabella tapparelle-----------------------------
 						case 0x08:					// alza
-							if (devc[didx.]devType != 9) devc[didx].devType = 8;
+							if (devc[didx].devType != 9) devc[didx].devType = 8;
 							if (opt.tapparelle_pct)
 							{
 								ixTapp = 0;
@@ -3149,7 +3152,7 @@ BYTE increment;
 							break;
 
 						case 0x09:					// abbassa
-							if (devc[didx.]devType != 9) devc[didx].devType = 8;
+							if (devc[didx].devType != 9) devc[didx].devType = 8;
 							f = 0;
 							if (opt.tapparelle_pct)
 							{
@@ -3183,7 +3186,7 @@ BYTE increment;
 							break;
 
 						case 0x0A:                  // stop
-							if (devc[didx.]devType != 9) devc[didx].devType = 8;
+							if (devc[didx].devType != 9) devc[didx].devType = 8;
 							if (opt.tapparelle_pct)
 							{
 								ixTapp = 0;
@@ -3819,6 +3822,7 @@ void main(void)
     if (opt.eeVersion != EEPROM_VER)
     {
 		eepromInit();
+		opt.Vref = 0xFE;	// forza setup automatico
     }
 	else
 		Read_tapparelle();
@@ -3883,6 +3887,12 @@ void main(void)
 
     AppInitialize();
 
+	if (opt.Vref == 0xFE)
+	{
+        opt.Vref = SetInternalVref();
+ 	    CVRCONbits.CVR = opt.Vref;
+		Write_config(0);
+	}
     uSpikes = 0;
     while(1)
     {
