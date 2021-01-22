@@ -2,7 +2,7 @@
 
 // definire _ESP8285  oppure _ESP8266  oppure _RASPBERRY_7 o RASPBERRY_8
 
-#define VERSION1 "525"
+#define VERSION1 "527"
 
 // ----------------------------------------------------
 
@@ -32,6 +32,7 @@
 
 #define VERSION  VERSION0 VERSION1 VERSION2
 
+// 19.527 corretto errore test jumper su @QR
 // 19.524 corretto errore di memoria quando @Y1 senza @F3 - auto set init vref
 // SCS WARNING - LA PUBBLICAZIONE AVVIENE SOLO SE PRIMA E' PERVENUTO UN /cmd qualunque da mqtt !!!!!!!!!!!!!!!
 // perchè non è ancora avverato:				if (sm_modo == SM_MODO_INTERNO)
@@ -280,6 +281,7 @@ ROM char baud_value[2][8] = {
 
 // ===================================================================================
 BYTE   RestartCounter = 0;
+static BYTE 		initOption;
 static BYTE         Ticks;
 static BYTE         ledLamps = 200;
 static BYTE         SystemTicks;
@@ -709,12 +711,14 @@ static void InitializeBoard(void)
 	uart_in_use = 1;
 	if (J1_IN == 1)			// no jumper - client mode
 	{
+		initOption = 'c';
 		putcUSBwait('c');
 		DelayMs(200);
 	    LED_SYS= 1;
 	}
 	else
 	{
+		initOption = 'a';
 		putcUSBwait('a');	// jumper - AP mode
 	    LED_SYS= 0;
 	}
@@ -762,9 +766,14 @@ BYTE VrValue;
     if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,10 Volts // se alimentazione 3.3V
     if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,20 Volts // se alimentazione 3.3V
     if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,30 Volts // se alimentazione 3.3V
-    if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,40 Volts // se alimentazione 3.3V : 1,5 x 13 = 3,5V
+    if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,40 Volts // se alimentazione 3.3V
+    if (VrValue) VrValue--;                      // abbasso la tensione di riferimento di 0,50 Volts // se alimentazione 3.3V : 1,5 x 13 = 3,5V
 
-//  CM1CONbits.EVPOL = 0b01; // interrupt on rising  edge  (INPUT FALLING)
+#ifdef _RASPBERRY_8
+    if (VrValue) VrValue--;  
+    if (VrValue) VrValue--;  
+#endif
+	//  CM1CONbits.EVPOL = 0b01; // interrupt on rising  edge  (INPUT FALLING)
     PIR4bits.CMP1IF  = 0;    // clear interrupt
 //  PIE4bits.CMP1IE  = 1;    //
 
@@ -2763,6 +2772,21 @@ void InputMapping(void)
 				{
 					case 'r':      // esp reset nr
 						putcUSBwait(RestartCounter);
+						break;
+					case 'R':      // esp reset type (a=AP c=CLIENT)
+#if defined(USE_J1)
+						DelayMs(200);
+					    J1_TRIS = 0;  // OUTPUT
+						J1_OUT  = 1;  // out 1
+						DelayMs(10);
+						uart_in_use = 1;
+						if (J1_IN == 1)			// no jumper - client mode
+							putcUSBwait('c');
+						else
+							putcUSBwait('a');	// jumper - AP mode
+						J1_TRIS = 1;  // INPUT
+						uart_in_use = 2;
+#endif
 						break;
 					default:
                         putrsUSBwait(VERSION);
