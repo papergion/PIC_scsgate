@@ -1,8 +1,9 @@
 #define TITLE    "xxxScsGate"
 
 // definire _ESP8285  oppure _ESP8266  oppure _RASPBERRY_7 o RASPBERRY_8
+//   RASPBERRY8  vale anche per la versione ARDUINO
 
-#define VERSION1 "536"
+#define VERSION1 "540" // very slow speed for arduino 
 
 // ----------------------------------------------------
 
@@ -33,6 +34,9 @@
 
 #define VERSION  VERSION0 VERSION1 VERSION2
 
+// 19.539 auto-ack
+// 19.538 filtro 8 per accettare checksum errati
+// 19.537 uart high speed
 // 19.536 nn - errori di passaggio automatico in modalità MX possono essere dovuti ad una definizione in ALEXA (anche tolta da esp)
 // 19.528 extended stream - versione intermedia
 // 19.527 corretto errore test jumper su @QR
@@ -203,6 +207,13 @@ void getUART(void);
     #pragma config MSSPMSK=MSK7 // can mask a 7 bit
     #pragma config MCLRE=ON
     #pragma config XINST=OFF
+
+    #pragma config CP0=ON
+    #pragma config CP1=ON
+    #pragma config CP2=ON
+    #pragma config CP3=ON
+    #pragma config CPB=ON
+
 #endif
 // ===================================================================================
 #define EE_CONFIG		0x00   // indirizzo eeprom configurazione
@@ -364,14 +375,19 @@ BYTE	uartTrace = 0;
 									 //   '8':  aggiorna una tapparella
 									 //   '9':  pulisce tutta la tabella
 									 //   'c':  clear posizioni
-		SM_WAIT_DOMOTIC_OPTIONS,	 //
+		SM_WAIT_DOMOTIC_OPTIONS,	 //   'O'
 		SM_WAIT_MY_BUSID,			 //
+									 //   '@P'  '@N'  '@n'   auto_ack totale   parziale  off
 
         SM_WAIT_TABSTART,       //  "@D[start]"
         SM_READ_DEQUEUE,        //  "@r
         SM_WAIT_RESET,          //  "@|| 
 //      SM_READ_WAIT,           //  "@R
     }   sm_command = SM_WAIT_HEADER;
+								//   @^  uart high speed (2000000 BAUD)
+	                            //   @(0xEC)  uart normal speed (115200 baud)
+	                            //   @(0xED)  uart slow speed   (38400 baud)
+	                            //   @(0xEE)  uart very slow speed   (19200 baud)
 // ===================================================================================
     enum _SM_STATO
     {
@@ -396,12 +412,14 @@ BYTE    testPhase;
 BYTE	test_destin;
 BYTE	test_source;
 BYTE	test_command;
+BYTE    auto_ack_low  = 0;
+BYTE    auto_ack_high = 0;
 // ===================================================================================
 typedef union _SCS_OPTIONS {
   struct {
 			BYTE		eeVersion;              //    versione eeprom
 			BYTE		opzioneModo;            //    [A|X] : modo ascii | hex
-			BYTE		opzioneFiltro;          //    [0-7] : filtro"
+			BYTE		opzioneFiltro;          //    [0-7] : filtro - 8=ignora check"
 			BYTE		Vref;
 			BYTE		EfilterByte_A;	//v 4.2  HB: 0000=byte filter off    0001=byte filter include    byte 0010=filter exclude
 										//v 4.2  HB  0100=exclude ack        1000=exclude equal tlgrm
@@ -568,6 +586,8 @@ void IncrementBufferPtr(void);
 void LogScsDisplay(void);
 void AnswerMsg(void);
 void AnswerMsgInternal(void);
+char hexInput1(char * data, char choice);
+char hexInput2(char * data, char choice);
 void InputMapping(void);
 void TransferFunction(void);
 void OutputMapping(void);
@@ -1367,6 +1387,27 @@ void InputMapping(void)
 						  ee_avoid_answer = 1;
 						  Write_config(ee_avoid_memo);
                           break;
+                     case 'P':      // set auto-ack for address range 0x01-AF
+                          auto_ack_low  = 0x01;
+                          auto_ack_high = 0xAF;
+						  if (ee_avoid_answer == 0)
+								putcUSBwait('k');
+						  sm_command = SM_WAIT_HEADER;
+                          break;
+                     case 'N':      // set auto-ack for address range 0x80-9F
+                          auto_ack_low  = 0x80;
+                          auto_ack_high = 0x9F;
+						  if (ee_avoid_answer == 0)
+								putcUSBwait('k');
+						  sm_command = SM_WAIT_HEADER;
+                          break;
+                     case 'n':      // set auto-ack  off
+                          auto_ack_low  = 0;
+                          auto_ack_high = 0;
+						  if (ee_avoid_answer == 0)
+								putcUSBwait('k');
+						  sm_command = SM_WAIT_HEADER;
+                          break;
                      case 'O':      // domotic options
                           sm_command = SM_WAIT_DOMOTIC_OPTIONS;
                           break;
@@ -1590,6 +1631,155 @@ void InputMapping(void)
 
 						  sm_command = SM_WAIT_HEADER;
                           break;
+
+// ------------------------------------------------------------------------------------
+		//   @^  uart high speed (2000000 BAUD)
+        //   @(0xEC)  uart normal speed (115200 baud)
+        //   @(0xED)  uart slow speed   (38400 baud)
+        //   @(0xEE)  uart very slow speed   (19200 baud)
+// ------------------------------------------------------------------------------------
+                     case '^':
+						  if (ee_avoid_answer == 0)
+                             putcUSBwait('k');
+// ultra high serial speed - 2.000.000 baud
+#if defined(USE_UART2)
+							RCSTA2bits.SPEN = 0;	// uart2 rx disabled
+							TXSTA2bits.TXEN = 0;	// tx disabled
+							SPBRGH2  = 0;
+							SPBRG2   = 7;
+							TXSTA2bits.TXEN = 1;	// tx enabled
+							RCSTA2bits.SPEN = 1;	// uart2 rx enabled
+							PIR3bits.RC2IF = 0;
+#endif
+#if defined(USE_UART1)
+	#ifdef UART1_INTERRUPT
+							INTCONbits.PEIE = 0;	// Disable peripheral interrupts
+							PIE1bits.RC1IE = 0;
+	#endif
+							RCSTA1bits.SPEN = 0;	// uart2 rx disabled
+							TXSTA1bits.TXEN = 0;		// tx disabled
+							SPBRGH1  = 0;
+							SPBRG1   = 7;
+							TXSTA1bits.TXEN = 1;		// tx enabled
+							RCSTA1bits.SPEN = 1;	// uart2 rx enabled
+							PIR1bits.RC1IF = 0;
+	#ifdef UART1_INTERRUPT
+							INTCONbits.PEIE = 1;	// Enable peripheral interrupts
+							PIE1bits.RC1IE = 1;
+							IPR1bits.RC1IP = 0;		// LOW priority 
+	#endif
+#endif
+						  sm_command = SM_WAIT_HEADER;
+                          break;
+
+// ------------------------------------------------------------------------------------
+//                     case 'ì':
+                     case 0xEC:
+        //   @(0xEC)  uart normal speed (115200 baud)
+						  if (ee_avoid_answer == 0)
+                             putcUSBwait('k');
+// standard serial speed - 115200 baud
+#if defined(USE_UART2)
+							RCSTA2bits.SPEN = 0;	// uart2 rx disabled
+							TXSTA2bits.TXEN = 0;	// tx disabled
+							SPBRGH2  = baud_value[0][BAUD_RATE];
+							SPBRG2   = baud_value[1][BAUD_RATE];
+							TXSTA2bits.TXEN = 1;	// tx enabled
+							RCSTA2bits.SPEN = 1;	// uart2 rx enabled
+							PIR3bits.RC2IF = 0;
+#endif
+#if defined(USE_UART1)
+	#ifdef UART1_INTERRUPT
+							INTCONbits.PEIE = 0;	// Disable peripheral interrupts
+							PIE1bits.RC1IE = 0;
+	#endif
+							RCSTA1bits.SPEN = 0;	// uart2 rx disabled
+							TXSTA1bits.TXEN = 0;		// tx disabled
+							SPBRGH1  = baud_value[0][BAUD_RATE];
+							SPBRG1   = baud_value[1][BAUD_RATE];
+							TXSTA1bits.TXEN = 1;		// tx enabled
+							RCSTA1bits.SPEN = 1;	// uart2 rx enabled
+							PIR1bits.RC1IF = 0;
+	#ifdef UART1_INTERRUPT
+							INTCONbits.PEIE = 1;	// Enable peripheral interrupts
+							PIE1bits.RC1IE = 1;
+							IPR1bits.RC1IP = 0;		// LOW priority 
+	#endif
+#endif
+						  sm_command = SM_WAIT_HEADER;
+                          break;
+// ROM char *baud_str[] = { "1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"};
+
+                     case 0xED:
+        //   @(0xED)  uart slow speed   (38400 baud)
+						  if (ee_avoid_answer == 0)
+                             putcUSBwait('k');
+// standard serial speed - 115200 baud
+#if defined(USE_UART2)
+							RCSTA2bits.SPEN = 0;	// uart2 rx disabled
+							TXSTA2bits.TXEN = 0;	// tx disabled
+							SPBRGH2  = baud_value[0][BAUD_RATE-2];
+							SPBRG2   = baud_value[1][BAUD_RATE-2];
+							TXSTA2bits.TXEN = 1;	// tx enabled
+							RCSTA2bits.SPEN = 1;	// uart2 rx enabled
+							PIR3bits.RC2IF = 0;
+#endif
+#if defined(USE_UART1)
+	#ifdef UART1_INTERRUPT
+							INTCONbits.PEIE = 0;	// Disable peripheral interrupts
+							PIE1bits.RC1IE = 0;
+	#endif
+							RCSTA1bits.SPEN = 0;	// uart2 rx disabled
+							TXSTA1bits.TXEN = 0;		// tx disabled
+							SPBRGH1  = baud_value[0][BAUD_RATE-2];
+							SPBRG1   = baud_value[1][BAUD_RATE-2];
+							TXSTA1bits.TXEN = 1;		// tx enabled
+							RCSTA1bits.SPEN = 1;	// uart2 rx enabled
+							PIR1bits.RC1IF = 0;
+	#ifdef UART1_INTERRUPT
+							INTCONbits.PEIE = 1;	// Enable peripheral interrupts
+							PIE1bits.RC1IE = 1;
+							IPR1bits.RC1IP = 0;		// LOW priority 
+	#endif
+#endif
+						  sm_command = SM_WAIT_HEADER;
+                          break;
+
+                     case 0xEE:
+        //   @(0xEE)  uart very slow speed   (19200 baud)
+						  if (ee_avoid_answer == 0)
+                             putcUSBwait('k');
+// standard serial speed - 115200 baud
+#if defined(USE_UART2)
+							RCSTA2bits.SPEN = 0;	// uart2 rx disabled
+							TXSTA2bits.TXEN = 0;	// tx disabled
+							SPBRGH2  = baud_value[0][BAUD_RATE-3];
+							SPBRG2   = baud_value[1][BAUD_RATE-3];
+							TXSTA2bits.TXEN = 1;	// tx enabled
+							RCSTA2bits.SPEN = 1;	// uart2 rx enabled
+							PIR3bits.RC2IF = 0;
+#endif
+#if defined(USE_UART1)
+	#ifdef UART1_INTERRUPT
+							INTCONbits.PEIE = 0;	// Disable peripheral interrupts
+							PIE1bits.RC1IE = 0;
+	#endif
+							RCSTA1bits.SPEN = 0;	// uart2 rx disabled
+							TXSTA1bits.TXEN = 0;		// tx disabled
+							SPBRGH1  = baud_value[0][BAUD_RATE-3];
+							SPBRG1   = baud_value[1][BAUD_RATE-3];
+							TXSTA1bits.TXEN = 1;		// tx enabled
+							RCSTA1bits.SPEN = 1;	// uart2 rx enabled
+							PIR1bits.RC1IF = 0;
+	#ifdef UART1_INTERRUPT
+							INTCONbits.PEIE = 1;	// Enable peripheral interrupts
+							PIE1bits.RC1IE = 1;
+							IPR1bits.RC1IP = 0;		// LOW priority 
+	#endif
+#endif
+						  sm_command = SM_WAIT_HEADER;
+                          break;
+
                      case 'S':       // byte stream timeout 
 						  stream_timeout = (BYTE) getUSBvalue();
 						  opt.stream_timeout = stream_timeout;
@@ -1826,7 +2016,7 @@ void InputMapping(void)
                           sm_command = SM_WAIT_HEADER;
                           break;
 //#endif
-
+#ifdef __DEBUG
 // ----------------------- fine opzioni di test --------------------------------------
                      case 'p':       // rx msg fasullo
 						  if (rBufferIdxR == 0) rBufferIdxR = SCSBUFMAX;
@@ -1852,7 +2042,7 @@ void InputMapping(void)
         				  }
                           sm_command = SM_WAIT_HEADER;
                           break;
-
+#endif
 
                      case '|':       // reset request - first req char
                           sm_command = SM_WAIT_RESET;
@@ -1912,7 +2102,7 @@ void InputMapping(void)
 				 break;
 
 			case SM_WAIT_FILTRO:  //    "@F[0-7] : filtro"
-                 if ((choice0 >= '0') && (choice0 <= '7'))
+                 if ((choice0 >= '0') && (choice0 <= '8'))
                  {
                      if (opt.opzioneFiltro != (choice0 - '0'))
 					 {
@@ -3283,7 +3473,8 @@ BYTE check = 0;
 		if	(check ^= 0)
 		{
 			errorChecksum++;
-			valido = 0;
+			if (!(opt.opzioneFiltro & 0x08))
+				valido = 0;
 		}
 	}
 
@@ -3411,7 +3602,7 @@ BYTE tmpbus  = 0xFF;
 					  (scsMessageRx[rBufferIdxR][11] == 0xA3))
 // 0B A8 EC bb 00 00 dd ss 12 cc C6 A3
 				  {
-					  if (scsMessageRx[rBufferIdxR][3] = 0xFF)
+					  if (scsMessageRx[rBufferIdxR][3] == 0xFF)
 						  tmpbus = scsMessageRx[rBufferIdxR][4];
 					  else
 						  tmpbus = scsMessageRx[rBufferIdxR][3];
@@ -3429,8 +3620,17 @@ BYTE tmpbus  = 0xFF;
 					break;
 
 				  case 0x12:	// comando/stato automazione
+					  // implementazione di test per auto-ack
+
 					if (tmpdest < 0xB0)
+					{
 						didx = tmpdest;
+						if ((tmpdest <= auto_ack_high) && (tmpdest >= auto_ack_low))	// TEST AUTO-ACK  (0xA5)
+						{
+							 dataByte.TopByte = 0xA5;
+							 queueWrite(1);
+						}
+					}
 					else
 					{
 						didx = tmpfrom;
