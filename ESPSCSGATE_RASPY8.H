@@ -29,7 +29,7 @@
 
 #if (HW == 20201220)
   #define INIT_TRISA  (0b00000001) //
-  #define INIT_TRISB  (0b10000110) // 
+  #define INIT_TRISB  (0b10010110) // 
   #define INIT_TRISC  (0b10100101) //
   #define LED_SYS      LATBbits.LATB5
   #define BAUD_RATE         7      // 115200 baud

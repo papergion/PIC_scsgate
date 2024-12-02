@@ -27,8 +27,8 @@ ricalcolati per alimentatore knx
 ;                                +--------+  +--------+
 ;                 mclr   --------|1  re3/mclr   rb7 28|---<----   pgd   rx2 usart usb
 ;                        --------|2  ra0        rb6 27|--->----   pgc   tx2 usart usb
-;               SYS led  ---<----|3  ra1        rb5 26|--------   nc
-;                        --------|4  ra2        rb4 25|--------   nc    
+;               SYS led  ---<----|3  ra1        rb5 26|--------   sys led V usb
+;						 --------|4  ra2        rb4 25|--------   join  
 ;                        --------|5  ra3        rb3 24|--------   nc
 ;                  Vcap  --------|6             rb2 23|--------   nc
 ;                        --------|7  ra5        rb1 22|----<---   C1inB
@@ -44,7 +44,7 @@ ricalcolati per alimentatore knx
 
 #if (HW == 160318)
   #define INIT_TRISA  (0b10001000) //
-  #define INIT_TRISB  (0b10000010) // 
+  #define INIT_TRISB  (0b10010010) // 
   #define INIT_TRISC  (0b10100011) //
   #define LED_SYS      LATAbits.LATA1
   #define BAUD_RATE         7      // 115200 baud

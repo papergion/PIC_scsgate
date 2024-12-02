@@ -3,7 +3,7 @@
 // definire _ESP8285  oppure _ESP8266  oppure _RASPBERRY_7 o RASPBERRY_8
 //   RASPBERRY8  vale anche per la versione ARDUINO
 
-#define VERSION1 "540" // very slow speed for arduino 
+#define VERSION1 "543" // very slow speed for arduino - very high speed mode (@^) - high speed mode (@')
 
 // ----------------------------------------------------
 
@@ -1672,6 +1672,42 @@ void InputMapping(void)
 						  sm_command = SM_WAIT_HEADER;
                           break;
 
+
+// ------------------------------------------------------------------------------------
+                     case 0x39:	// (@') high speed - 500000 baud
+						  if (ee_avoid_answer == 0)
+                             putcUSBwait('k');
+// standard serial speed - 500000 baud
+#if defined(USE_UART2)
+							RCSTA2bits.SPEN = 0;	// uart2 rx disabled
+							TXSTA2bits.TXEN = 0;	// tx disabled
+							SPBRGH2  = 0;
+							SPBRG2   = 31;
+							TXSTA2bits.TXEN = 1;	// tx enabled
+							RCSTA2bits.SPEN = 1;	// uart2 rx enabled
+							PIR3bits.RC2IF = 0;
+#endif
+#if defined(USE_UART1)
+	#ifdef UART1_INTERRUPT
+							INTCONbits.PEIE = 0;	// Disable peripheral interrupts
+							PIE1bits.RC1IE = 0;
+	#endif
+							RCSTA1bits.SPEN = 0;	// uart2 rx disabled
+							TXSTA1bits.TXEN = 0;		// tx disabled
+							SPBRGH1  = 0;
+							SPBRG1   = 31;
+							TXSTA1bits.TXEN = 1;		// tx enabled
+							RCSTA1bits.SPEN = 1;	// uart2 rx enabled
+							PIR1bits.RC1IF = 0;
+	#ifdef UART1_INTERRUPT
+							INTCONbits.PEIE = 1;	// Enable peripheral interrupts
+							PIE1bits.RC1IE = 1;
+							IPR1bits.RC1IP = 0;		// LOW priority 
+	#endif
+#endif
+						  sm_command = SM_WAIT_HEADER;
+                          break;
+
 // ------------------------------------------------------------------------------------
 //                     case 'ì':
                      case 0xEC:
@@ -1710,6 +1746,7 @@ void InputMapping(void)
                           break;
 // ROM char *baud_str[] = { "1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"};
 
+// ------------------------------------------------------------------------------------
                      case 0xED:
         //   @(0xED)  uart slow speed   (38400 baud)
 						  if (ee_avoid_answer == 0)
@@ -1745,6 +1782,7 @@ void InputMapping(void)
 						  sm_command = SM_WAIT_HEADER;
                           break;
 
+// ------------------------------------------------------------------------------------
                      case 0xEE:
         //   @(0xEE)  uart very slow speed   (19200 baud)
 						  if (ee_avoid_answer == 0)
@@ -1779,6 +1817,7 @@ void InputMapping(void)
 #endif
 						  sm_command = SM_WAIT_HEADER;
                           break;
+// ------------------------------------------------------------------------------------
 
                      case 'S':       // byte stream timeout 
 						  stream_timeout = (BYTE) getUSBvalue();
