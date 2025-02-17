@@ -8,7 +8,7 @@ dir_src=
 dir_bin=.\BIN
 dir_tmp=.\OBJ
 dir_sin=
-dir_inc=.;H:\Microchip Solutions\LIBRARY\BASE;H:\Microchip Solutions\Microchip536\Include
+dir_inc=.;.\LIB
 dir_lib=C:\Program Files (x86)\Microchip\mplabc18\v3.46\lib
 dir_lkr=
 [CAT_FILTERS]
@@ -34,6 +34,7 @@ file_006=.
 file_007=.
 file_008=.
 file_009=.
+file_010=.
 [GENERATED_FILES]
 file_000=no
 file_001=no
@@ -45,6 +46,7 @@ file_006=no
 file_007=no
 file_008=no
 file_009=no
+file_010=no
 [OTHER_FILES]
 file_000=no
 file_001=no
@@ -56,17 +58,19 @@ file_006=no
 file_007=no
 file_008=no
 file_009=no
+file_010=no
 [FILE_INFO]
 file_000=ESPSCSGATE.C
-file_001=H:\Microchip Solutions\LIBRARY\BASE\DELAY.c
-file_002=H:\Microchip Solutions\LIBRARY\BASE\CANREPRO_232_EVO.ASM
-file_003=H:\Microchip Solutions\LIBRARY\SCSINTRP\SCS_UART.ASM
+file_001=LIB\CANREPRO_232_EVO.ASM
+file_002=LIB\DELAY.c
+file_003=LIB\SCS_UART.ASM
 file_004=canrepro.inc
-file_005=H:\Microchip Solutions\LIBRARY\BASE\DELAY.H
-file_006=H:\Microchip Solutions\LIBRARY\BASE\GENERICTYPEDEFS.H
-file_007=ESPSCSGATE_RASPY8.H
-file_008=SCS_RASPY8.INC
-file_009=H:\Microchip Solutions\LIBRARY\BASE\18F26K80_B.LKR
+file_005=ESPSCSGATE_RASPY8.H
+file_006=SCS_RASPY8.INC
+file_007=LIB\Compiler.h
+file_008=LIB\DELAY.H
+file_009=LIB\GENERICTYPEDEFS.H
+file_010=LIB\18F26K80_B.LKR
 [SUITE_INFO]
 suite_guid={5B7D72DD-9861-47BD-9F60-2BE967BF8416}
 suite_state=
