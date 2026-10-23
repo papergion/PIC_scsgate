@@ -3,8 +3,10 @@
 // definire _ESP8285  oppure _ESP8266  oppure _RASPBERRY_7 o RASPBERRY_8
 //   RASPBERRY8  vale anche per la versione ARDUINO
 
-#define VERSION1 "543" // very slow speed for arduino - very high speed mode (@^) - high speed mode (@')
-
+//#define VERSION1 "545" // very slow speed for arduino - very high speed mode (@^) - high speed mode (@')
+//#define VERSION1 "55" 	// enhanced test mode
+//#define VERSION1 "57" 	// @qH : help for http page
+#define VERSION1 "58" 	// auto-ack per devtype 0x80, 0x81
 // ----------------------------------------------------
 
 #ifdef _ESP8285
@@ -37,13 +39,13 @@
 // 19.539 auto-ack
 // 19.538 filtro 8 per accettare checksum errati
 // 19.537 uart high speed
-// 19.536 nn - errori di passaggio automatico in modalità MX possono essere dovuti ad una definizione in ALEXA (anche tolta da esp)
+// 19.536 nn - errori di passaggio automatico in modalita MX possono essere dovuti ad una definizione in ALEXA (anche tolta da esp)
 // 19.528 extended stream - versione intermedia
 // 19.527 corretto errore test jumper su @QR
 // 19.524 corretto errore di memoria quando @Y1 senza @F3 - auto set init vref
 // SCS WARNING - LA PUBBLICAZIONE AVVIENE SOLO SE PRIMA E' PERVENUTO UN /cmd qualunque da mqtt !!!!!!!!!!!!!!!
-// perchè non è ancora avverato:				if (sm_modo == SM_MODO_INTERNO)
-//        aspetta di ricevere:                  if (choice0 == '§')  
+// perche' non e' ancora avverato:				if (sm_modo == SM_MODO_INTERNO)
+//        aspetta di ricevere:                  if (choice0 == 'Â§')  
 //
 // 19.514 correzione comandi generali tapparelle - tapparella generale B1
 // 19.513 gestione comandi generali tapparelle
@@ -52,7 +54,7 @@
 // 19.506 correzione ricezione UART1 su buffer da interrupt
 // 19.505 verifica splafonamenti di memoria...
 // 19.504 comando @TT valido anche in hex - per debug/test
-// 19.503 opzione per passaggio immediato a modalità monitor @o o http @0x17
+// 19.503 opzione per passaggio immediato a modalita' monitor @o o http @0x17
 // 19.502 correzione devc - adattamento a scskxxgate_v5
 // 19.422 riconosce stato allarme
 // 19.421 tabella devc strutturata
@@ -68,13 +70,17 @@
 #define inUART()   getUART()
 void getUART(void);
 #endif
+
+//#define PIC_START 'ï¿½'
+unsigned char PIC_START = 0xA7;  // Â§
+
 //		i comandi interni hanno un particolare formato:
-//          § data  (§ sostituisce @)
-//                        § D <address>    per richiesta censimento dispositivi
-//		                  § U <comando>
-//		                  § u <indirizzo> <valore>
-//		                  § y <comandi>
-//		                  § l              short log request
+//          PIC_START data  (PIC_START sostituisce @)
+//                        PIC_START D <address>    per richiesta censimento dispositivi
+//		                  PIC_START U <comando>
+//		                  PIC_START u <indirizzo> <valore>
+//		                  PIC_START y <comandi>
+//		                  PIC_START l              short log request
 //      risposte di comunicazione interna     
 //          0xF1-5
 //                        0xf3  D <address> <tipo>
@@ -229,6 +235,10 @@ typedef union _DEVICE   { // 0xFF:empty
 								// 8:tapparella   9:tapparella pct   
 								// 0B generic    0C generic 
 								// 0E:allarme	 0F termostato
+								// 0x30-0x37:rele i2c auto-ack-3
+								// 0x40-0x47:pulsanti i2c
+								// 80:switch auto-ack 
+								// 81:switch auto-ack-3
 //	  unsigned char fill1  : 3;	//bit 4-6 - non usato
 //	  unsigned char renew  : 1;	//bit 7   - 1:stato sconosciuto
         };
@@ -253,18 +263,18 @@ typedef union _TAPSETUP    {
         BYTE device;		//      [] indirizzo 
 #ifdef TAPPA_SINGOLA	// posizione su di 1 byte (200mS)
         BYTE busid;			//      id bus
-        BYTE maxposition;	//      [] posizione massima (in unità da 0,2 secondi)
+        BYTE maxposition;	//      [] posizione massima (in unita da 0,2 secondi)
 #else
-        WORD maxposition;	//      [] posizione massima (in unità da 0,1 secondi)
+        WORD maxposition;	//      [] posizione massima (in unita da 0,1 secondi)
 #endif
         };
   struct {
         BYTE adevice;		//      [] indirizzo 
 #ifdef TAPPA_SINGOLA	// posizione su di 1 byte (200mS)
         BYTE abusid;		//      id bus
-        BYTE amaxposition;	//      [] posizione massima (in unità da 0,2 secondi)
+        BYTE amaxposition;	//      [] posizione massima (in unita da 0,2 secondi)
 #else
-        WORD_VAL amaxposition;	//      [] posizione massima (in unità da 0,1 secondi)
+        WORD_VAL amaxposition;	//      [] posizione massima (in unita da 0,1 secondi)
 #endif
         };
 } TAP_SETUP;
@@ -272,14 +282,14 @@ typedef union _TAPSETUP    {
 typedef union _TAPDATA     {
   struct {
         BYTE_VAL direction;		//      [] half.LB  direzione (0=ferma  9=giu  8=su )      bit7 = 0 : da pubblicare       1 : pubblicato
-        WORD	position;		//      [] posizione attuale (in unità da 0,1 secondi)
-        WORD	request;		//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+        WORD	position;		//      [] posizione attuale (in unita da 0,1 secondi)
+        WORD	request;		//      [] posizione richiesta tapparella (in unita da 0,1 secondi) - nulla = 0xFFFF
         BYTE	timeout;		//      [] timeout attuale (in unita da 0,1 secondi)
         };
   struct {
         BYTE_VAL adirection;	//      [] half.LB  direzione (0=ferma  9=giu  8=su )      bit7 = 0 : da pubblicare       1 : pubblicato
-        WORD_VAL aposition;		//      [] posizione attuale (in unità da 0,1 secondi)
-        WORD_VAL arequest;		//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+        WORD_VAL aposition;		//      [] posizione attuale (in unita da 0,1 secondi)
+        WORD_VAL arequest;		//      [] posizione richiesta tapparella (in unita da 0,1 secondi) - nulla = 0xFFFF
         BYTE_VAL atimeout;		//      [] timeout attuale (in unita da 0,1 secondi)
         };
 } TAP_DATA;
@@ -335,6 +345,7 @@ static BYTE         uart_echo = 0;
 static int errorCollision = 0;
 static int errorChecksum = 0;
 BYTE	uartTrace = 0;
+BYTE	prevScsTestLen = 0;
 #pragma udata
 // ===================================================================================
     enum _SM_COMMAND
@@ -515,7 +526,7 @@ extern BYTE filterValue_A;	//v 4.2  valore byte di filtro   (0-FF)
 extern BYTE filterByte_B;	//v 4.4  HB: 0000=byte filter off    0001=byte filter include    byte 0010=filter exclude
 							//v 4.4  LB: byte nr su cui filtrare (1-F) - comparato con rByteCount (0=filteroff)
 extern BYTE filterValue_B;	//v 4.4  valore byte di filtro   (0-FF)
-extern BYTE stream_timeout; //v 4.7  timeout di stream (il complemento a 255 diviso 4 è il timeout in uS)
+extern BYTE stream_timeout; //v 4.7  timeout di stream (il complemento a 255 diviso 4 e' il timeout in uS)
 // ==============================================================================================================================
 extern void scsInit(void);
 extern void scsInterruptInput(void);
@@ -584,6 +595,7 @@ void TickInit(void);
 void AppInitialize(void);
 void IncrementBufferPtr(void);
 void LogScsDisplay(void);
+void LogScsTest(BYTE len);
 void AnswerMsg(void);
 void AnswerMsgInternal(void);
 char hexInput1(char * data, char choice);
@@ -594,6 +606,7 @@ void OutputMapping(void);
 void queueWrite(char dataLength);
 void DisplayScsTx(BYTE len);
 void DisplayScsRxBuffers(void);
+void DisplayLastRxBuffers(void);
 void UserProcess(void);
 void TapparellaAction(char ixTapp, char action);
 BYTE TapparellaGoto(char ixTapp, char position);
@@ -915,8 +928,8 @@ void eepromInit(void)
 #endif
 			devicetappa[m].maxposition = 0;
 			tapparella[m].direction.Val = 0;	//      [] direzione (0=ferma  9=giu  8=su )
-			tapparella[m].position = 0;		//      [] posizione attuale (in unità da 0,1 secondi)
-			tapparella[m].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+			tapparella[m].position = 0;		//      [] posizione attuale (in unita da 0,1 secondi)
+			tapparella[m].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unita da 0,1 secondi) - nulla = 0xFFFF
 			tapparella[m].timeout = 0;		//      [] timeout attuale (in unita da 0,1 secondi)
 			m++;
 		}
@@ -1046,6 +1059,50 @@ BYTE s, m, n, l;
     }
     RS_Out_Buffer[m] = 0;
     putsUSBwait(RS_Out_Buffer);
+}
+// ===================================================================================
+void LogScsTest(BYTE len)
+{
+BYTE s, m, n, l;
+    if (optionW.W_ERROR)  // test bit 2
+    {
+        putrsUSBwait("\r\n > Write timeout");
+        optionW.W_ERROR = 0; // azzera bit 2
+    }
+
+    strcpypgm2ram(RS_Out_Buffer, "\r\nTX:  ");
+    m = 6;
+    l = len;
+    if (l > 15) l = 15;
+	n = 0;
+	while (n<l)
+    {
+        RS_Out_Buffer[m++] = btohexa_high(dataByte.data[n]);
+        RS_Out_Buffer[m++] = btohexa_low (dataByte.data[n]);
+        RS_Out_Buffer[m++] = ' ';
+		n++;
+    }
+    RS_Out_Buffer[m] = 0;
+    putsUSBwait(RS_Out_Buffer);
+
+    strcpypgm2ram(RS_Out_Buffer, "\r\nRX:  ");
+    m = 6;
+    l = scsMessageRx[rBufferIdxR][0];
+    if (l > 15) l = 15;
+	s = 1;
+	n = 0;
+	while (n<l)
+    {
+        RS_Out_Buffer[m++] = btohexa_high(scsMessageRx[rBufferIdxR][s]);
+        RS_Out_Buffer[m++] = btohexa_low (scsMessageRx[rBufferIdxR][s]);
+        RS_Out_Buffer[m++] = ' ';
+		n++;
+		s++;
+    }
+    RS_Out_Buffer[m] = 0;
+    putsUSBwait(RS_Out_Buffer);
+
+
 }
 // ===================================================================================
 
@@ -1234,6 +1291,223 @@ char dataHalf;
      }
 }
 // -------------------------------------------------------------------------
+void LongHelp(void) // 'h'
+{
+	int  i;
+
+	putrsUSBwait(menuScsPrompt);
+	putrsUSBwait("\r\nActual Vref: ");
+	itoa((int)opt.Vref,RS_Out_Buffer);
+	putsUSBwait(RS_Out_Buffer);
+
+	putrsUSBwait("\r\n---> modo...: A");
+	putrsUSBwait("\r\n---> filtro : ");
+	putcUSBwait('0'+opt.opzioneFiltro);
+
+// 4.2  gestisce il byte filtering -A--------------------------------------------------
+	putrsUSBwait("\r\n---> filtro byte A: ");
+	if ((opt.EfilterByte_A & 0x30) == 0)
+		putrsUSBwait("NO ");
+	else
+	{
+		if (opt.EfilterByte_A & 0x10) putrsUSBwait("include byte nr: ");
+		else
+		if (opt.EfilterByte_A & 0x20) putrsUSBwait("exclude byte nr: ");
+
+		putcUSBwait('0'+(opt.EfilterByte_A & 0x0F));
+		putrsUSBwait("  - value: ");
+		putcUSBwait(btohexa_high(opt.EfilterValue_A));
+		putcUSBwait(btohexa_low(opt.EfilterValue_A));
+	}
+// 4.2  gestisce il byte filtering ----------------------------------------------------
+
+// 4.4  gestisce il byte filtering -B--------------------------------------------------
+	putrsUSBwait("\r\n---> filtro byte B: ");
+	if ((opt.EfilterByte_B & 0x30) == 0)
+		putrsUSBwait("NO ");
+	else
+	{
+		if (opt.EfilterByte_B & 0x10) putrsUSBwait("include byte nr: ");
+		else
+		if (opt.EfilterByte_B & 0x20) putrsUSBwait("exclude byte nr: ");
+
+		putcUSBwait('0'+(opt.EfilterByte_B & 0x0F));
+		putrsUSBwait("  - value: ");
+		putcUSBwait(btohexa_high(opt.EfilterValue_B));
+		putcUSBwait(btohexa_low(opt.EfilterValue_B));
+	}
+	putrsUSBwait("\r\n---> stream abbreviati: ");
+	putcUSBwait(opt.abbrevia.Val);
+
+	if (opt.domotic_options == 1)
+	{
+		putrsUSBwait("\r\n---> extended frames - bus id: ");
+		putcUSBwait(btohexa_low(opt.my_busid));
+	}
+
+	putrsUSBwait("\r\n---> stream timeout: ");
+	itoa((int)opt.stream_timeout,RS_Out_Buffer);
+	putsUSBwait(RS_Out_Buffer);
+	putrsUSBwait(" ... uS: ");
+//	uS = ((255 - stream_timeout) + 1) * 4
+	i = 256;
+	i -= opt.stream_timeout;
+	i *= 4;
+	itoa(i,RS_Out_Buffer);
+	putsUSBwait(RS_Out_Buffer);
+
+	putrsUSBwait("\r\n---> spikes counter: ");
+	itoa((int)uSpikes,RS_Out_Buffer);
+	putsUSBwait(RS_Out_Buffer);
+
+// 4.2  gestisce il byte filtering ----------------------------------------------------
+#if (defined(USE_UART1) && defined(USE_UART2))
+
+// echo=0 : l'output di knxgate viene inviato all'uart che ha fornito l'ultimo input in ordine di tempo
+// echo=1 : l'output di knxgate viene inviato ad entrambe le uart indipendentemente dall'input
+// echo=2 : l'output di knxgate viene inviato ad entrambe le uart indipendentemente dall'input
+//          l'input di uart2    viene inviato solo in output a uart1 ma non a knxgate
+// echo=3 : l'output di knxgate viene inviato ad entrambe le uart indipendentemente dall'input
+//          l'input di uart1    viene inviato anche in output a uart2
+//          l'input di uart2    viene ignorato
+// echo=4 : l'output di knxgate viene inviato solo a UART1
+//          l'input di uart1    viene inviato anche in output a uart2
+//          l'input di uart2    viene ignorato
+
+	if (uart_echo == 0) putrsUSBwait("\r\nuart echo OFF");
+	if (uart_echo == 1) putrsUSBwait("\r\nuart echo 1 ON");
+	if (uart_echo == 2) putrsUSBwait("\r\nuart gate USB master");
+	if (uart_echo == 3) putrsUSBwait("\r\nuart gate ESP master");
+	if (uart_echo == 4) putrsUSBwait("\r\nuart gate USB reply ESP");
+#endif
+
+	putrsUSBwait("\r\n---> write error: ");
+	itoa(errorCollision,RS_Out_Buffer);
+	putsUSBwait(RS_Out_Buffer);
+
+	putrsUSBwait("\r\n---> read  error: ");
+	itoa(errorChecksum,RS_Out_Buffer);
+	putsUSBwait(RS_Out_Buffer);
+
+	putrsUSBwait("\r\n---> uart   FERR: ");
+	itoa(uartFERR,RS_Out_Buffer);
+	putsUSBwait(RS_Out_Buffer);
+
+	putrsUSBwait("\r\n---> uart   OERR: ");
+	itoa(uartOERR,RS_Out_Buffer);
+	putsUSBwait(RS_Out_Buffer);
+
+	putrsUSBwait("\r\n---> pic   RCON: ");
+	putbinUSBwait(RCON);
+	RCON |= 0x1F;
+
+#if defined(_ESP8285) || defined(_ESP8266)
+	putrsUSBwait("\r\nESP restart counter: "); // esp8266  esp8285
+	itoa((int)RestartCounter,RS_Out_Buffer);
+	putsUSBwait(RS_Out_Buffer);
+#endif
+//							  uartFERR = 0;
+//							  uartOERR = 0;
+	if (uartTrace)
+	{
+		putrsUSBwait("\r\nMEMORY FAULT!!! ");
+	}
+
+	putrsUSBwait("\r\nGestione tapparelle %: ");
+	switch (opt.tapparelle_pct)
+	{
+	case 0:
+	putrsUSBwait("NO");
+	break;
+	case 1:
+	putrsUSBwait("scanning");
+	break;
+	case 3:
+		putrsUSBwait("SI & publ: ");
+		itoa(maxtapp,RS_Out_Buffer);
+		putsUSBwait(RS_Out_Buffer);
+	break;
+	case 4:
+		putrsUSBwait("SI npub: ");
+		itoa(maxtapp,RS_Out_Buffer);
+		putsUSBwait(RS_Out_Buffer);
+	break;
+	}
+#ifdef _BOOTMODE
+	putrsUSBwait("\r\n-------------- ESP BOOT --------------");
+	putsUSBwait(bootMsg);
+#endif
+	putrsUSBwait("\r\n");
+}
+
+
+
+
+
+// ===================================================================================
+void ReplyACK(void)
+					  // implementazione di test per auto-ack
+{
+BYTE clear, retry;
+int  n;
+	retry = 0;
+	do
+	{
+		scsMessageTx[0] = 0xA5;
+	// attende che termini eventuale telegramma in arrivo - anti collisione PREVENTIVO
+		clear = 4;
+		n = 0;
+		while ((clear) && (n < 300))
+		{
+			if (optionR.R_READING)// || (INPUT_SCS == 1)) 	// lettura in corso !
+			{
+				ClrWdt();
+				clear = 4;
+				n++;
+			}
+			else
+				clear--;
+		}
+		INTCONbits.GIEH     = 0;	// non va bene - chiude anche interrupt UART
+		INTCONbits.GIEL     = 0;	// non va bene - chiude anche interrupt UART
+		n = scsSendWait(1);
+		retry++;
+		if (optionW.W_ERROR)  errorCollision++;
+	} while ((optionW.W_ERROR == 1) && (retry < 50));
+
+	rBufferIdxP = 0xFF;		// <--- al prossimo giro non controlla messaggi doppi
+
+	PIR4bits.CMP1IF  = 0;    // clear interrupt
+    PIR2bits.TMR3IF  = 0;    // clear INTERRUPT FLAG
+    INTCONbits.TMR0IF = 0;   // clear INTERRUPT FLAG
+	INTCONbits.GIEH     = 1; // high priority interrupt enabled
+	INTCONbits.GIEL     = 1; // low  priority interrupt enabled
+	optionR.Val = 0;
+	if ((sm_stato   ==  SM_LOG_WAIT) && (opt.opzioneModo == 'A'))
+	    putrsUSBwait("\r\nSnd[A5]");
+}
+
+// -------------------------------------------------------------------------
+void ReplyACK_3(void)
+{
+					  // implementazione di test per auto-ack
+	if (scsMessageRx[rBufferIdxR][0] == 7)
+	{
+		ReplyACK();
+//		DelayMs(5);
+		dataByte.data[0] = scsMessageRx[rBufferIdxR][1]; // 0xA8
+		dataByte.data[1] = 0xB8;
+		dataByte.data[2] = scsMessageRx[rBufferIdxR][2];
+		dataByte.data[3] = scsMessageRx[rBufferIdxR][4];	// 0x12
+		dataByte.data[4] = scsMessageRx[rBufferIdxR][5];	// cmd
+		dataByte.data[5] = 0xB8 ^ scsMessageRx[rBufferIdxR][6];	// chk
+		dataByte.data[5] ^= scsMessageRx[rBufferIdxR][3];        // chk
+		dataByte.data[6] = scsMessageRx[rBufferIdxR][7];	// 0xA3
+		queueWrite(7);
+		queueWrite(7);
+		queueWrite(7);
+	}
+}
 
 // ******************************************************************************/
 // * input analyze and mapping                                                  */
@@ -1263,7 +1537,7 @@ void InputMapping(void)
 					 sm_modo = SM_MODO_UDP; 
 				 }
 				 else
-                 if (choice0 == '§')  
+                 if (choice0 == PIC_START)  
 				 {
 					 sm_command = SM_WAIT_COMMAND;
 					 sm_modo = SM_MODO_INTERNO; 
@@ -1303,7 +1577,7 @@ void InputMapping(void)
                  {
                      case '@':
                           break;
-                     case '§':
+                     case 0xA7:
                           break;
                      case 0x11:      // firmware update
 	 					  INTCONbits.GIEH     = 0;	// non va bene - chiude anche interrupt UART
@@ -1709,7 +1983,7 @@ void InputMapping(void)
                           break;
 
 // ------------------------------------------------------------------------------------
-//                     case 'ì':
+//                     case 'Ã¬':
                      case 0xEC:
         //   @(0xEC)  uart normal speed (115200 baud)
 						  if (ee_avoid_answer == 0)
@@ -1832,150 +2106,7 @@ void InputMapping(void)
                      case 'h':
                           if (opt.opzioneModo == 'A')
                           {
-                              putrsUSBwait(menuScsPrompt);
-                              putrsUSBwait("\r\nActual Vref: ");
-                              itoa((int)opt.Vref,RS_Out_Buffer);
-                              putsUSBwait(RS_Out_Buffer);
-
-							  putrsUSBwait("\r\n---> modo...: A");
-							  putrsUSBwait("\r\n---> filtro : ");
-                              putcUSBwait('0'+opt.opzioneFiltro);
-
-							// 4.2  gestisce il byte filtering -A--------------------------------------------------
-							  putrsUSBwait("\r\n---> filtro byte A: ");
-							  if ((opt.EfilterByte_A & 0x30) == 0)
-								  putrsUSBwait("NO ");
-							  else
-							  {
-								  if (opt.EfilterByte_A & 0x10) putrsUSBwait("include byte nr: ");
-								  else
-								  if (opt.EfilterByte_A & 0x20) putrsUSBwait("exclude byte nr: ");
-
-								  putcUSBwait('0'+(opt.EfilterByte_A & 0x0F));
-								  putrsUSBwait("  - value: ");
-								  putcUSBwait(btohexa_high(opt.EfilterValue_A));
-								  putcUSBwait(btohexa_low(opt.EfilterValue_A));
-							  }
-						    // 4.2  gestisce il byte filtering ----------------------------------------------------
-
-							// 4.4  gestisce il byte filtering -B--------------------------------------------------
-							  putrsUSBwait("\r\n---> filtro byte B: ");
-							  if ((opt.EfilterByte_B & 0x30) == 0)
-								  putrsUSBwait("NO ");
-							  else
-							  {
-								  if (opt.EfilterByte_B & 0x10) putrsUSBwait("include byte nr: ");
-								  else
-								  if (opt.EfilterByte_B & 0x20) putrsUSBwait("exclude byte nr: ");
-
-								  putcUSBwait('0'+(opt.EfilterByte_B & 0x0F));
-								  putrsUSBwait("  - value: ");
-								  putcUSBwait(btohexa_high(opt.EfilterValue_B));
-								  putcUSBwait(btohexa_low(opt.EfilterValue_B));
-							  }
-							  putrsUSBwait("\r\n---> stream abbreviati: ");
-							  putcUSBwait(opt.abbrevia.Val);
-
-							  if (opt.domotic_options == 1)
-							  {
-								  putrsUSBwait("\r\n---> extended frames - bus id: ");
-								  putcUSBwait(btohexa_low(opt.my_busid));
-							  }
-
-							  putrsUSBwait("\r\n---> stream timeout: ");
-                              itoa((int)opt.stream_timeout,RS_Out_Buffer);
-                              putsUSBwait(RS_Out_Buffer);
-							  putrsUSBwait(" ... uS: ");
-				//	uS = ((255 - stream_timeout) + 1) * 4
-							  i = 256;
-							  i -= opt.stream_timeout;
-							  i *= 4;
-                              itoa(i,RS_Out_Buffer);
-                              putsUSBwait(RS_Out_Buffer);
-
-							  putrsUSBwait("\r\n---> spikes counter: ");
-                              itoa((int)uSpikes,RS_Out_Buffer);
-                              putsUSBwait(RS_Out_Buffer);
-
-							// 4.2  gestisce il byte filtering ----------------------------------------------------
-#if (defined(USE_UART1) && defined(USE_UART2))
-
-// echo=0 : l'output di knxgate viene inviato all'uart che ha fornito l'ultimo input in ordine di tempo
-// echo=1 : l'output di knxgate viene inviato ad entrambe le uart indipendentemente dall'input
-// echo=2 : l'output di knxgate viene inviato ad entrambe le uart indipendentemente dall'input
-//          l'input di uart2    viene inviato solo in output a uart1 ma non a knxgate
-// echo=3 : l'output di knxgate viene inviato ad entrambe le uart indipendentemente dall'input
-//          l'input di uart1    viene inviato anche in output a uart2
-//          l'input di uart2    viene ignorato
-// echo=4 : l'output di knxgate viene inviato solo a UART1
-//          l'input di uart1    viene inviato anche in output a uart2
-//          l'input di uart2    viene ignorato
-
-							  if (uart_echo == 0) putrsUSBwait("\r\nuart echo OFF");
-							  if (uart_echo == 1) putrsUSBwait("\r\nuart echo 1 ON");
-							  if (uart_echo == 2) putrsUSBwait("\r\nuart gate USB master");
-							  if (uart_echo == 3) putrsUSBwait("\r\nuart gate ESP master");
-							  if (uart_echo == 4) putrsUSBwait("\r\nuart gate USB reply ESP");
-#endif
-
-							  putrsUSBwait("\r\n---> write error: ");
-                              itoa(errorCollision,RS_Out_Buffer);
-                              putsUSBwait(RS_Out_Buffer);
-
-							  putrsUSBwait("\r\n---> read  error: ");
-                              itoa(errorChecksum,RS_Out_Buffer);
-                              putsUSBwait(RS_Out_Buffer);
-
-							  putrsUSBwait("\r\n---> uart   FERR: ");
-                              itoa(uartFERR,RS_Out_Buffer);
-                              putsUSBwait(RS_Out_Buffer);
-
-							  putrsUSBwait("\r\n---> uart   OERR: ");
-                              itoa(uartOERR,RS_Out_Buffer);
-                              putsUSBwait(RS_Out_Buffer);
-
-							  putrsUSBwait("\r\n---> pic   RCON: ");
-							  putbinUSBwait(RCON);
-							  RCON |= 0x1F;
-
-#if defined(_ESP8285) || defined(_ESP8266)
-							  putrsUSBwait("\r\nESP restart counter: "); // esp8266  esp8285
-							  itoa((int)RestartCounter,RS_Out_Buffer);
-							  putsUSBwait(RS_Out_Buffer);
-#endif
-//							  uartFERR = 0;
-//							  uartOERR = 0;
-							  if (uartTrace)
-							  {
-								  putrsUSBwait("\r\nMEMORY FAULT!!! ");
-							  }
-
-							  putrsUSBwait("\r\nGestione tapparelle %: ");
-							  switch (opt.tapparelle_pct)
-							  {
-							  case 0:
-								putrsUSBwait("NO");
-								break;
-							  case 1:
-								putrsUSBwait("scanning");
-								break;
-							  case 3:
-								  putrsUSBwait("SI & publ: ");
-	                              itoa(maxtapp,RS_Out_Buffer);
-		                          putsUSBwait(RS_Out_Buffer);
-								break;
-							  case 4:
-								  putrsUSBwait("SI npub: ");
-	                              itoa(maxtapp,RS_Out_Buffer);
-		                          putsUSBwait(RS_Out_Buffer);
-								break;
-							  }
-#ifdef _BOOTMODE
-                              putrsUSBwait("\r\n-------------- ESP BOOT --------------");
-		                      putsUSBwait(bootMsg);
-#endif
-                              putrsUSBwait("--------------------------------------\r\n");
-
+							LongHelp(); 
 						  }
                           else
                               putcUSBwait('E');
@@ -2370,6 +2501,12 @@ void InputMapping(void)
                  if  ((opt.opzioneModo == 'X') || (sm_modo == SM_MODO_INTERNO))
                  {
                      writeLength = choice0;
+                     if ((writeLength == 0) || (writeLength > 15))
+					 {
+						 putcUSBwait('E');
+						 sm_command = SM_WAIT_HEADER;
+						 break;
+					 }
                  }
                  else
                  if ((choice0 >= '1') && (choice0 <= '9'))
@@ -2662,10 +2799,12 @@ void InputMapping(void)
 						wv.byte.HB = getUSBwait();   // max position H (se devtype 9)
 						wv.byte.LB = getUSBwait();   // max position L (se devtype 9)
 						if (wv.Val > 1200) wv.Val = 1200;
-						if ((n > 0) && (n < DEV_NR) && (m > 0) && (m < 32))
+						if ((n > 0) && (n < DEV_NR) && (m > 0) && (m < 0x8F)) // <--------- test auto ack
 						{
 						   devc[n].devType = m;
-                           if (m == 9)
+                           
+						   
+						   if (m == 9)
 						   {
 								if (opt.tapparelle_pct == 0)
 								{
@@ -2684,7 +2823,7 @@ void InputMapping(void)
 											Write_eep_array(&devicetappa[b], (b*3)+EE_TAPPA_SETUP+1, 3);
 											DelayMs(10);
 										}
-										putcUSBwait('k');
+//										putcUSBwait('k');
 										b = 250;
 									}
 									b++;
@@ -2700,14 +2839,15 @@ void InputMapping(void)
 									Write_eep_array(&devicetappa[b], (b*3)+EE_TAPPA_SETUP+1, 3);
 
 									tapparella[b].direction.Val = 0x80;	//      [] direzione (0=ferma  9=giu  8=su )
-									tapparella[b].position = 0;		//      [] posizione attuale (in unità da 0,1 secondi)
-									tapparella[b].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+									tapparella[b].position = 0;		//      [] posizione attuale (in unita da 0,1 secondi)
+									tapparella[b].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unita da 0,1 secondi) - nulla = 0xFFFF
 									tapparella[b].timeout = 0;		//      [] timeout attuale (in unita da 0,1 secondi)
 
 									DelayMs(10);
-									putcUSBwait('k');
+//									putcUSBwait('k');
 								}
 						   } // m == 9
+						   putcUSBwait('k');
 						}
 					 }
 				 	 break;
@@ -2719,8 +2859,8 @@ void InputMapping(void)
 						devicetappa[m].device = 0;
 						devicetappa[m].maxposition = 0;
 						tapparella[m].direction.Val = 0;//      [] direzione (0=ferma  9=giu  8=su )
-						tapparella[m].position = 0;		//      [] posizione attuale (in unità da 0,1 secondi)
-						tapparella[m].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+						tapparella[m].position = 0;		//      [] posizione attuale (in unita da 0,1 secondi)
+						tapparella[m].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unita da 0,1 secondi) - nulla = 0xFFFF
 						tapparella[m].timeout = 0;		//      [] timeout attuale (in unita da 0,1 secondi)
 						m++;
 					 }
@@ -2741,8 +2881,8 @@ void InputMapping(void)
 					 while (m<MAXTAPP)
 					 {
 						tapparella[m].direction.Val = 0;//      [] direzione (0=ferma  9=giu  8=su )
-						tapparella[m].position = 0;		//      [] posizione attuale (in unità da 0,1 secondi)
-						tapparella[m].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+						tapparella[m].position = 0;		//      [] posizione attuale (in unita da 0,1 secondi)
+						tapparella[m].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unita da 0,1 secondi) - nulla = 0xFFFF
 						tapparella[m].timeout = 0;		//      [] timeout attuale (in unita da 0,1 secondi)
 						m++;
 					 }
@@ -3287,6 +3427,13 @@ void InputMapping(void)
 					default:
                         putrsUSBwait(VERSION);
 						break;
+					case 'H':      // esp HELP page request
+						LongHelp(); 
+						DisplayLastRxBuffers();
+						break;
+					case 'L':      // esp LOG page request
+						DisplayLastRxBuffers();
+						break;
 				}
                 sm_command = SM_WAIT_HEADER;
                 break;
@@ -3466,7 +3613,7 @@ BYTE  try;
 						tapparella[ixTapp].timeout = 0;
 						tapparella[ixTapp].request = 0xFFFF;
 						tapparella[ixTapp].direction.half.LS = 0;
-						TapparellaAction(devicetappa[ixTapp].device, STOP);  /// ??? sarà meglio ???
+						TapparellaAction(devicetappa[ixTapp].device, STOP);  /// ??? sara meglio ???
 					}
 				}
 				else
@@ -3476,7 +3623,7 @@ BYTE  try;
 						tapparella[ixTapp].timeout = 0;
 						tapparella[ixTapp].request = 0xFFFF;
 						tapparella[ixTapp].direction.half.LS = 0;
-						TapparellaAction(devicetappa[ixTapp].device, STOP);  /// ??? sarà meglio ???
+						TapparellaAction(devicetappa[ixTapp].device, STOP);  /// ??? sara meglio ???
 					}
 				}
 				ixTapp++;
@@ -3600,7 +3747,7 @@ void CmdTotaleTapparelle(BYTE comando)
 // ******************************************************************************/
 void OutputMapping(void)
 {
-BYTE f,l,m;
+BYTE f,len,m;
 BYTE increment;
 BYTE tmpdest = 0;
 BYTE tmpfrom = 0;
@@ -3660,14 +3807,14 @@ BYTE tmpbus  = 0xFF;
 
 				  case 0x12:	// comando/stato automazione
 					  // implementazione di test per auto-ack
-
 					if (tmpdest < 0xB0)
 					{
 						didx = tmpdest;
 						if ((tmpdest <= auto_ack_high) && (tmpdest >= auto_ack_low))	// TEST AUTO-ACK  (0xA5)
 						{
-							 dataByte.TopByte = 0xA5;
-							 queueWrite(1);
+							ReplyACK_3();
+//							dataByte.TopByte = 0xA5;
+//							queueWrite(1);
 						}
 					}
 					else
@@ -3685,8 +3832,18 @@ BYTE tmpbus  = 0xFF;
 						}
 					}
 
+					  // implementazione di test per auto-ack
 					if ((didx > 0) && (didx < DEV_NR)) 
 					{
+						if (devc[didx].devType == 0x80)
+							ReplyACK();
+						else
+						if (devc[didx].devType == 0x81)
+							ReplyACK_3();
+						else
+						if ((devc[didx].devType >= 0x30) && (devc[didx].devType < 0x38))
+							ReplyACK_3();
+
 						switch (tmpcmd)
 						{
 						case 0:
@@ -3871,14 +4028,14 @@ BYTE tmpbus  = 0xFF;
 
 			if (sm_stato   ==  SM_ECHO_ON)
 			{
-				l = scsMessageRx[rBufferIdxR][0];
+				len = scsMessageRx[rBufferIdxR][0];
 				f = 1;
 				m = 0;
-				while (m < l)
+				while (m < len)
 				{
         			dataByte.data[m++] = scsMessageRx[rBufferIdxR][f++];
 				}
-				queueWrite(l);
+				queueWrite(len);
 				increment = 1;		// messaggio scodato
 			}
 		}		// (MsgValido())
@@ -3898,7 +4055,7 @@ BYTE tmpbus  = 0xFF;
 				{
 					putcUSBwait('N');
 					if (opt.opzioneModo == 'A')
-						LogScsDisplay();
+						LogScsDisplay(); // ricevuto
 					testCounter = 0;
 					testPhase = 0;
 					putrsUSBwait("\r\nTest FAILED!!!");
@@ -3968,29 +4125,30 @@ BYTE tmpbus  = 0xFF;
 		if (sm_stato   ==  SM_TEST_MODE)
 		{
 			f = 0;
-            l = 1;
-			while (l < scsMessageRx[rBufferIdxR][0])
+            len = 1;
+			while (len < scsMessageRx[rBufferIdxR][0])
 			{
-				if (scsMessageRx[rBufferIdxR][l] != dataByte.data[l-1])
+				if (scsMessageRx[rBufferIdxR][len] != dataByte.data[len-1])
 					f = 1;
-				l++;
+				len++;
 			}
 			if (f == 0)
 				putcUSBwait('k');
 			else
 			{
 				putcUSBwait('N');
-				if (opt.opzioneModo == 'A')
-					LogScsDisplay();
-				testCounter = 0;
 				putrsUSBwait("\r\nTest FAILED!!!");
+				if (opt.opzioneModo == 'A')
+					LogScsTest(prevScsTestLen); // trasmesso & ricevuto
+				testCounter = 0;
 				sm_stato = SM_HOME;
+				return;
 			}
 
-			l = dataByte.data[0] & 0x0F;
-			if (l < 4) l = 4;
+			len = dataByte.data[0] & 0x0F;
+			if (len < 4) len = 4;
 			f = 0;
-			while (f < l)  
+			while (f < len)  
 			{
 				dataByte.data[f]++;
 				f ++;
@@ -3999,13 +4157,14 @@ BYTE tmpbus  = 0xFF;
 			}
 			f = 1;
 			m = 0;
-			while (f < l-2)  // 8  1-2-3-4-5-c-7
+			while (f < len-2)  // 8  1-2-3-4-5-c-7
 			{
 				m ^= dataByte.data[f];
 				f ++;
 			}
-			dataByte.data[l-2] = m; // check byte
-  		    queueWrite(l);
+			dataByte.data[len-2] = m; // check byte
+  		    queueWrite(len);
+			prevScsTestLen = len;
 
 			putcUSBwait('.');
 			testCounter--;
@@ -4431,8 +4590,8 @@ void main(void)
 	while (i<MAXTAPP)
 	{
 		tapparella[i].direction.Val = 0;	//      [] direzione (0=ferma  9=giu  8=su )
-		tapparella[i].position = 0;		//      [] posizione attuale (in unità da 0,1 secondi)
-		tapparella[i].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unità da 0,1 secondi) - nulla = 0xFFFF
+		tapparella[i].position = 0;		//      [] posizione attuale (in unita da 0,1 secondi)
+		tapparella[i].request = 0xFFFF;	//      [] posizione richiesta tapparella (in unita da 0,1 secondi) - nulla = 0xFFFF
 		tapparella[i].timeout = 0;		//      [] timeout attuale (in unita da 0,1 secondi)
 		i++;
 	}
@@ -4695,6 +4854,37 @@ void DisplayScsRxBuffers(void)
     RS_Out_Buffer[8] = btohexa_high(rBufferIdxR);
     RS_Out_Buffer[9] = btohexa_low (rBufferIdxR);
     putsUSBwait(RS_Out_Buffer);
+}
+// ===================================================================================
+void DisplayLastRxBuffers(void)
+{
+    BYTE m, n, b, i, y;
+//  WORD_VAL tmp;
+	n = rBufferIdxW;	// n=actual buffer ptr
+	putrsUSBwait("Last RX:\r\n");
+    for (y=0; y<SCSBUFMAX; y++)  // y=counter
+    {
+		if (n >= SCSBUFMAX) n = 0;
+		m = 0;					// m = output pointer
+        b = scsMessageRx[n][0];	// b = msg length
+		if (b > 0)
+		{
+			b++;
+			RS_Out_Buffer[0] = 0;
+			for (i=1; i<b; i++) // i = msg byte pointer
+			{
+				RS_Out_Buffer[m++] = btohexa_high(scsMessageRx[n][i]);
+				RS_Out_Buffer[m++] = btohexa_low (scsMessageRx[n][i]);
+				RS_Out_Buffer[m++] = ' ';
+			}
+			RS_Out_Buffer[m++] = '\r';
+			RS_Out_Buffer[m++] = '\n';
+			RS_Out_Buffer[m] = 0;
+			putsUSBwait(RS_Out_Buffer);
+		}
+		n++;
+    }
+	putrsUSBwait("eof\r\n");
 }
 // ===================================================================================
 void WriteByteEEP(BYTE Data, int Addr)
